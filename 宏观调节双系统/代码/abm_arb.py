@@ -17,6 +17,11 @@ import arb_lib as L
 FIT = lambda n: json.loads((L.OUT / "拟合" / f"{n}.json").read_text(encoding="utf-8"))
 SPECS = {"M0": L.Spec(), "RG": L.Spec(ratio=L.MODS, gain=L.MODS), "HRG": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True),
          "H0": L.Spec(habit=True)}
+# 中介分解（用 HRG 的估计，关掉某一条"宏观 → 微观"路径）：(拟合名, 改动)
+VARIANTS = {"M0": ("M0", {}), "RG": ("RG", {}), "H0": ("H0", {}), "HRG": ("HRG", {}),
+            "HRG_关直接比例调节": ("HRG", {"no_ratio": True}),
+            "HRG_关习惯累积": ("HRG", {"no_accum": True}),
+            "HRG_两条都关": ("HRG", {"no_ratio": True, "no_accum": True})}
 B = 1000
 STD = L.load_std()
 
@@ -40,9 +45,14 @@ def fingerprint(N, A):
 
 def abm_one(args):
     name, seed = args
-    spec, fit = SPECS[name], FIT(name)
+    fname, mod = VARIANTS[name]
+    spec, fit = SPECS[fname], FIT(fname)
     X = np.array(fit["X"]); phi = np.array([fit["shared"][k] for k in spec.names()]); sig = fit["sigma"]
     lam, thR, thG, aH = spec.unpack(phi)
+    if mod.get("no_ratio"):
+        thR = {m: 0.0 for m in thR}
+    if mod.get("no_accum"):
+        aH = 1.0
     zs = lambda m, v: (v - STD[m][0]) / STD[m][1]
     rng = np.random.default_rng(seed)
     n = X.shape[0]
@@ -73,8 +83,9 @@ def abm_one(args):
         else:
             c = 2 * a - 1
     fp = fingerprint(N, A)
+    fp["habit_strength"] = float(np.mean(np.abs(c)))                         # 最后一轮的平均习惯强度 |c|
     fp["rbar_sd"] = float(rbar[2:].std())                                    # 群体平均比例随时间波动的幅度
-    fp["rbar_corr_crowdflip"] = float(np.corrcoef(rbar[3:], (N[2:-1] > L.CAP) != (N[1:-2] > L.CAP))[0, 1]) if spec.ratio else 0.0
+    fp["rbar_corr_crowdflip"] = float(np.corrcoef(rbar[3:], (N[2:-1] > L.CAP) != (N[1:-2] > L.CAP))[0, 1]) if spec.ratio and np.std(rbar[3:]) > 0 else 0.0
     return name, fp
 
 
@@ -84,7 +95,7 @@ def p2(sim, ob):
 
 
 if __name__ == "__main__":
-    names = [n for n in SPECS if (L.OUT / "拟合" / f"{n}.json").exists()]
+    names = [n for n, (fn, _) in VARIANTS.items() if (L.OUT / "拟合" / f"{fn}.json").exists()]
     with Pool(4) as pool:
         res = pool.map(abm_one, [(n, 300000 + 7919 * i + 101 * k) for k, n in enumerate(names) for i in range(B)])
     obs = fingerprint(L.ATT, L.A_REAL)
