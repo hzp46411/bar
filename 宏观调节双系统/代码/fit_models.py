@@ -23,6 +23,8 @@ for m in L.MODS:
     MODELS[f"RG-{m}"] = L.Spec(ratio=[x for x in L.MODS if x != m], gain=L.MODS)
 MODELS["H0"] = L.Spec(habit=True)
 MODELS["HRG"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True)
+for m in L.MODS:                                         # 习惯痕迹主模型的逐项检验（HRG 收敛后加入）
+    MODELS[f"HRG-{m}"] = L.Spec(ratio=[x for x in L.MODS if x != m], gain=L.MODS, habit=True)
 DIR = L.OUT / "拟合"
 
 
@@ -52,8 +54,9 @@ def job(name):
 if __name__ == "__main__":
     L.load_std()
     (L.W / "日志").mkdir(exist_ok=True)
-    order = ["M0", "RG", "R", "G", "H0", "HRG"] + [f"RG-{m}" for m in L.MODS]
+    order = sys.argv[1:] or (["M0", "RG", "R", "G", "H0", "HRG"] + [f"RG-{m}" for m in L.MODS])
     with Pool(4) as pool:
         for name, msg in pool.imap_unordered(job, order):
             print(name, msg, flush=True)
-    (L.CKPT / "fit_models.done").write_text("ok")
+    if not sys.argv[1:]:
+        (L.CKPT / "fit_models.done").write_text("ok")

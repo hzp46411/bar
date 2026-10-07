@@ -16,7 +16,8 @@ import arb_lib as L
 
 DIR = L.OUT / "恢复"
 FIT = lambda n: json.loads((L.OUT / "拟合" / f"{n}.json").read_text(encoding="utf-8"))
-SPEC_RG = L.Spec(ratio=L.MODS, gain=L.MODS)
+SPEC_RG = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True)   # 主模型改为习惯痕迹 + 调节（HRG）
+SPEC_0 = L.Spec(habit=True)                                  # 对照：习惯痕迹、无调节（H0）
 
 
 def job(args):
@@ -25,8 +26,8 @@ def job(args):
     out = DIR / f"{name}.json"
     if out.exists():
         return name, "已完成（跳过）"
-    src = FIT("RG" if kind == "真值" else "M0")
-    spec_src = SPEC_RG if kind == "真值" else L.Spec()
+    src = FIT("HRG" if kind == "真值" else "H0")
+    spec_src = SPEC_RG if kind == "真值" else SPEC_0
     Xs, phis = np.array(src["X"]), np.array([src["shared"][k] for k in spec_src.names()])
     seed = 500 + 37 * i + (0 if kind == "真值" else 10000)
     rng = np.random.default_rng(seed)
@@ -38,8 +39,9 @@ def job(args):
     logf = open(L.W / "日志" / f"recovery_{name}.log", "a", encoding="utf-8")
     log = lambda s: (logf.write(s + "\n"), logf.flush())
     res = dict(name=name, kind=kind, seed=seed, true=dict(zip(spec_src.names(), phis.tolist())), true_sigma=src["sigma"])
-    for mname, spec in (("M0", L.Spec()), ("RG", SPEC_RG)):
+    for mname, spec in (("M0", SPEC_0), ("RG", SPEC_RG)):
         phi0 = np.r_[L.base_lambda(), np.zeros(spec.k - 1)]
+        phi0[-1] = 1.0                                   # 习惯痕迹速率起点 ≈ 0.73
         # 个体多起点（共用参数取起点）→ 全参数联合 L-BFGS → 在新共用参数下再做一次个体多起点 → 再精修
         X, _ = L.fit_individuals(spec, phi0, A, L.G_REAL, L.S_REAL, L.ATT, [X0] + L.basin_starts(X0), seed=seed + 2)
         X, phi, f, _ = L.joint_lbfgs(spec, A, L.G_REAL, L.S_REAL, L.ATT, X, phi0)
@@ -67,7 +69,7 @@ def summarize():
                  for k in keys} if len(nul) > 1 else {}
     if nul:
         lr = np.array([r["LR_sigma"] for r in nul])
-        S["零套_LR_sigma"] = dict(均值=float(lr.mean()), 名义自由度=8, 假阳性率=float(np.mean(chi2.sf(np.maximum(lr, 0), 8) < .05)), 值=lr.tolist())
+        S["零套_LR_sigma"] = dict(均值=float(lr.mean()), 名义自由度=8, 说明="结果字段 M0 = H0（习惯痕迹无调节），RG = HRG", 假阳性率=float(np.mean(chi2.sf(np.maximum(lr, 0), 8) < .05)), 值=lr.tolist())
     if tru:
         S["真值套_LR_sigma"] = [r["LR_sigma"] for r in tru]
     L.save_json(S, L.OUT / "恢复汇总.json")
