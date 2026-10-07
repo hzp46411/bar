@@ -40,7 +40,11 @@ def job(args):
     res = dict(name=name, kind=kind, seed=seed, true=dict(zip(spec_src.names(), phis.tolist())), true_sigma=src["sigma"])
     for mname, spec in (("M0", L.Spec()), ("RG", SPEC_RG)):
         phi0 = np.r_[L.base_lambda(), np.zeros(spec.k - 1)]
-        X, phi, f, _ = L.joint_fit(spec, A, L.G_REAL, L.S_REAL, L.ATT, X0, phi0, max_rounds=5, rand_starts=0, later_basins=0, seed=seed + 2, log=log)
+        # 个体多起点（共用参数取起点）→ 全参数联合 L-BFGS → 在新共用参数下再做一次个体多起点 → 再精修
+        X, _ = L.fit_individuals(spec, phi0, A, L.G_REAL, L.S_REAL, L.ATT, [X0] + L.basin_starts(X0), seed=seed + 2)
+        X, phi, f, _ = L.joint_lbfgs(spec, A, L.G_REAL, L.S_REAL, L.ATT, X, phi0)
+        X, _ = L.fit_individuals(spec, phi, A, L.G_REAL, L.S_REAL, L.ATT, [X] + L.basin_starts(X), seed=seed + 3)
+        X, phi, f, _ = L.joint_lbfgs(spec, A, L.G_REAL, L.S_REAL, L.ATT, X, phi)
         z = L.run(X, spec, phi, A, L.G_REAL, L.S_REAL, L.ATT, out="z")
         sig, lls = L.marginal_sigma(z, A)
         res[mname] = dict(shared=dict(zip(spec.names(), phi.tolist())), nll=float(f.sum()), sigma=sig, loglik_sigma=lls)

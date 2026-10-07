@@ -241,6 +241,34 @@ def joint_fit(spec, A, G, S, N, X0, phi0, max_rounds=8, tol=0.05, rand_starts=2,
     return X, phi, f, hist
 
 
+def joint_lbfgs(spec, A, G, S, N, X0, phi0, std=None, maxiter=3000, h=1e-5):
+    """全参数联合精修：个体参数 (n×4) 与共用参数一起做 L-BFGS-B。
+    梯度：个体部分用"k+1 份叠放、各扰动一个参数"的一次前向计算；共用部分每个参数一次前向计算。"""
+    std = std or load_std()
+    n, k = A.shape[0], 4
+    ks = spec.k
+    stack = lambda Mx: np.tile(Mx, (k + 1, 1))
+    As, Gs, Ss = stack(A), stack(G), stack(S)
+
+    def objective(v):
+        X = v[:n * k].reshape(n, k); phi = v[n * k:]
+        Xs = stack(X)
+        for j in range(k):
+            Xs[(j + 1) * n:(j + 2) * n, j] += h
+        f = run(Xs, spec, phi, As, Gs, Ss, N, std=std).reshape(k + 1, n)
+        f0 = f[0].sum()
+        gX = ((f[1:] - f[0]) / h).T.ravel()
+        gphi = np.array([(run(X, spec, phi + h * np.eye(ks)[j], A, G, S, N, std=std).sum() - f0) / h for j in range(ks)])
+        return f0, np.r_[gX, gphi]
+
+    v0 = np.r_[np.clip(X0, LO, HI).ravel(), phi0]
+    bounds = list(zip(np.tile(LO, n), np.tile(HI, n))) + spec.bounds()
+    res = minimize(objective, v0, jac=True, method="L-BFGS-B", bounds=bounds, options={"maxiter": maxiter, "maxfun": maxiter * 2, "ftol": 1e-13, "gtol": 1e-7})
+    X = res.x[:n * k].reshape(n, k); phi = res.x[n * k:]
+    f = run(X, spec, phi, A, G, S, N, std=std)
+    return X, phi, f, dict(nit=int(res.nit), message=str(res.message))
+
+
 def marginal_sigma(z, A):
     """在固定的 logit z 上估计同轮共同冲击 σ：按轮对 ε 做 40 点高斯–埃尔米特积分。返回 (σ, 边际对数似然)。"""
     def ll(s):
