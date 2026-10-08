@@ -20,6 +20,30 @@ SPEC_RG = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"])   
 SPEC_0 = L.Spec(habit=True)                                  # 对照：习惯痕迹、无调节（H0）
 
 
+def staged_fit(spec, A, X0, phi0, seed, ck, log):
+    """分阶段拟合，每一段都存检查点：
+    0 个体多起点（共用参数取起点）→ 1 全参数 L-BFGS（每 200 步存一次）→ 2 新共用参数下再做个体多起点 → 3 再精修。"""
+    st = dict(np.load(ck)) if Path(ck).exists() else {}
+    stage = int(st.get("stage", 0)); X = st.get("X"); phi = st.get("phi")
+    save = lambda: np.savez(ck, stage=stage, X=X, phi=phi)
+    if stage > 0:
+        log(f"  从检查点继续：阶段 {stage}")
+    while stage < 4:
+        if stage in (0, 2):
+            base = X0 if stage == 0 else X
+            ph = phi0 if stage == 0 else phi
+            X, _ = L.fit_individuals(spec, ph, A, L.G_REAL, L.S_REAL, L.ATT, [base] + L.basin_starts(base), seed=seed + 2 + stage)
+            phi = np.array(ph, float); stage += 1; save()
+        else:
+            X, phi, f, info = L.joint_lbfgs(spec, A, L.G_REAL, L.S_REAL, L.ATT, X, phi, maxiter=200)
+            if "LIMIT" not in info["message"].upper():
+                stage += 1
+            save()
+            log(f"  阶段 {stage}：NLL = {f.sum():.3f}（{info['message'][:40]}）")
+    f = L.run(X, spec, phi, A, L.G_REAL, L.S_REAL, L.ATT)
+    return X, phi, f
+
+
 def job(args):
     kind, i = args
     name = f"{kind}_{i:02d}"
@@ -38,18 +62,19 @@ def job(args):
     X0 = np.zeros_like(Xs)
     logf = open(L.W / "日志" / f"recovery_{name}.log", "a", encoding="utf-8")
     log = lambda s: (logf.write(s + "\n"), logf.flush())
-    res = dict(name=name, kind=kind, seed=seed, true=dict(zip(spec_src.names(), phis.tolist())), true_sigma=src["sigma"])
+    part = DIR / f"{name}.partial.json"                    # 每个模型拟合完就存（容器重启后不必重做）
+    res = json.loads(part.read_text(encoding="utf-8")) if part.exists() else \
+        dict(name=name, kind=kind, seed=seed, true=dict(zip(spec_src.names(), phis.tolist())), true_sigma=src["sigma"])
     for mname, spec in (("M0", SPEC_0), ("RG", SPEC_RG)):
+        if mname in res:
+            continue
         phi0 = np.r_[L.base_lambda(), np.zeros(spec.k - 1)]
         phi0[-1] = 1.0                                   # 习惯痕迹速率起点 ≈ 0.73
-        # 个体多起点（共用参数取起点）→ 全参数联合 L-BFGS → 在新共用参数下再做一次个体多起点 → 再精修
-        X, _ = L.fit_individuals(spec, phi0, A, L.G_REAL, L.S_REAL, L.ATT, [X0] + L.basin_starts(X0), seed=seed + 2)
-        X, phi, f, _ = L.joint_lbfgs(spec, A, L.G_REAL, L.S_REAL, L.ATT, X, phi0)
-        X, _ = L.fit_individuals(spec, phi, A, L.G_REAL, L.S_REAL, L.ATT, [X] + L.basin_starts(X), seed=seed + 3)
-        X, phi, f, _ = L.joint_lbfgs(spec, A, L.G_REAL, L.S_REAL, L.ATT, X, phi)
+        X, phi, f = staged_fit(spec, A, X0, phi0, seed, L.CKPT / f"rec_{name}_{mname}.npz", log)
         z = L.run(X, spec, phi, A, L.G_REAL, L.S_REAL, L.ATT, out="z")
         sig, lls = L.marginal_sigma(z, A)
         res[mname] = dict(shared=dict(zip(spec.names(), phi.tolist())), nll=float(f.sum()), sigma=sig, loglik_sigma=lls)
+        L.save_json(res, part)
         log(f"{name} {mname}: NLL={f.sum():.2f} σ={sig:.3f}")
     res["LR"] = 2 * (res["M0"]["nll"] - res["RG"]["nll"])
     res["LR_sigma"] = 2 * (res["RG"]["loglik_sigma"] - res["M0"]["loglik_sigma"])
@@ -59,7 +84,7 @@ def job(args):
 
 def summarize():
     from scipy.stats import chi2
-    rs = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(DIR.glob("*.json"))]
+    rs = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(DIR.glob("*.json")) if not p.name.endswith(".partial.json")]
     keys = SPEC_RG.names()[1:]
     S = {"n_真值": sum(r["kind"] == "真值" for r in rs), "n_零": sum(r["kind"] == "零" for r in rs)}
     tru = [r for r in rs if r["kind"] == "真值"]; nul = [r for r in rs if r["kind"] == "零"]
