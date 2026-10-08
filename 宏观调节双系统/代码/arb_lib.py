@@ -245,14 +245,23 @@ def fit_shared(spec, X, phi0, A, G, S, N, std=None):
     return res.x, res.fun
 
 
-def joint_fit(spec, A, G, S, N, X0, phi0, max_rounds=8, tol=0.05, rand_starts=2, seed=0, log=print, std=None, later_basins=2):
+def joint_fit(spec, A, G, S, N, X0, phi0, max_rounds=8, tol=0.05, rand_starts=2, seed=0, log=print, std=None, later_basins=2, ckpt=None):
     """交替最大化：个体步（多起点）↔ 共用步，直到总 NLL 的改善 < tol。
-    第 1 轮起点 = 当前值 + 4 个盆地起点 + rand_starts 个随机起点；之后各轮 = 当前值 + later_basins 个盆地起点。"""
+    第 1 轮起点 = 当前值 + 4 个盆地起点 + rand_starts 个随机起点；之后各轮 = 当前值 + later_basins 个盆地起点。
+    ckpt：每轮结束后把 (X, φ, 历史) 存到该 .npz；再次调用时从最后完成的一轮继续（容器重启后不必从头来）。"""
     std = std or load_std()
     X, phi = X0.copy(), np.array(phi0, float)
     hist = []
     prev = np.inf
-    for rd in range(max_rounds):
+    start = 0
+    if ckpt is not None and Path(ckpt).exists():
+        d = np.load(ckpt)
+        X, phi, hist = d["X"], d["phi"], d["hist"].tolist()
+        start = len(hist); prev = hist[-1] if hist else np.inf
+        log(f"  从检查点继续：已完成 {start} 轮，总 NLL = {prev:.3f}")
+        if start >= 2 and hist[-2] - hist[-1] < tol:
+            start = max_rounds
+    for rd in range(start, max_rounds):
         inits = [X] + (basin_starts(X) if rd == 0 else basin_starts(X)[:later_basins])
         X, f = fit_individuals(spec, phi, A, G, S, N, inits, rand_starts if rd == 0 else 0, seed + rd, std)
         if spec.k > 0:
@@ -261,6 +270,8 @@ def joint_fit(spec, A, G, S, N, X0, phi0, max_rounds=8, tol=0.05, rand_starts=2,
             tot = f.sum()
         hist.append(float(tot))
         log(f"  第 {rd + 1} 轮：总 NLL = {tot:.3f}  共用 = {np.round(phi, 4).tolist()}")
+        if ckpt is not None:
+            np.savez(ckpt, X=X, phi=phi, hist=np.array(hist))
         if prev - tot < tol:
             break
         prev = tot

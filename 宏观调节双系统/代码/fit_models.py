@@ -48,7 +48,8 @@ def job(name):
     if spec.habit:
         phi0[-1] = 3.0                                   # α_H 起点 ≈ 0.95（接近原模型）
     log(f"开始 {name}: {spec.to_dict()}")
-    X, phi, f, hist = L.joint_fit(spec, L.A_REAL, L.G_REAL, L.S_REAL, L.ATT, L.base_X(), phi0, log=log)
+    X, phi, f, hist = L.joint_fit(spec, L.A_REAL, L.G_REAL, L.S_REAL, L.ATT, L.base_X(), phi0, log=log,
+                                  ckpt=L.CKPT / f"轮_{name}.npz")
     z = L.run(X, spec, phi, L.A_REAL, L.G_REAL, L.S_REAL, L.ATT, out="z")
     sig, ll_sig = L.marginal_sigma(z, L.A_REAL)
     res = dict(name=name, spec=spec.to_dict(), shared=dict(zip(spec.names(), phi.tolist())), k_shared=spec.k,
