@@ -16,7 +16,7 @@ import arb_lib as L
 
 DIR = L.OUT / "恢复"
 FIT = lambda n: json.loads((L.OUT / "拟合" / f"{n}.json").read_text(encoding="utf-8"))
-SPEC_RG = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True)   # 主模型改为习惯痕迹 + 调节（HRG）
+SPEC_RG = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"])   # 主模型：HRGP（习惯痕迹 + 比例/增益调节 + 加法重复推力）
 SPEC_0 = L.Spec(habit=True)                                  # 对照：习惯痕迹、无调节（H0）
 
 
@@ -26,7 +26,7 @@ def job(args):
     out = DIR / f"{name}.json"
     if out.exists():
         return name, "已完成（跳过）"
-    src = FIT("HRG" if kind == "真值" else "H0")
+    src = FIT("HRGP" if kind == "真值" else "H0")
     spec_src = SPEC_RG if kind == "真值" else SPEC_0
     Xs, phis = np.array(src["X"]), np.array([src["shared"][k] for k in spec_src.names()])
     seed = 500 + 37 * i + (0 if kind == "真值" else 10000)
@@ -69,7 +69,7 @@ def summarize():
                  for k in keys} if len(nul) > 1 else {}
     if nul:
         lr = np.array([r["LR_sigma"] for r in nul])
-        S["零套_LR_sigma"] = dict(均值=float(lr.mean()), 名义自由度=8, 说明="结果字段 M0 = H0（习惯痕迹无调节），RG = HRG", 假阳性率=float(np.mean(chi2.sf(np.maximum(lr, 0), 8) < .05)), 值=lr.tolist())
+        S["零套_LR_sigma"] = dict(均值=float(lr.mean()), 名义自由度=10, 说明="结果字段 M0 = H0（习惯痕迹无调节），RG = HRGP", 假阳性率=float(np.mean(chi2.sf(np.maximum(lr, 0), 10) < .05)), 值=lr.tolist())
     if tru:
         S["真值套_LR_sigma"] = [r["LR_sigma"] for r in tru]
     L.save_json(S, L.OUT / "恢复汇总.json")
