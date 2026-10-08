@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """预测分析的图：P1 选择对自己预测的依赖（台阶）；P2 冲突时跟随习惯的比例随宏观状态变化；P3 信念类型的汇聚效度；P4 共同信念冲击与人数；
-   P5 被习惯推去 / 推留时报告分布的差（工具变量）；P6 合理化的个体差异与工具变量的交叉验证"""
+   P5 被习惯推去 / 推留时报告分布的差（工具变量）；P6 联合模型结构；P7 合理化的个体差异与工具变量的交叉验证"""
 import json
 import numpy as np
 import matplotlib
@@ -75,7 +75,7 @@ ax.set_xlabel("k（人）"); ax.set_ylabel("报告 ≤ k 的概率之差")
 ax.legend(frameon=False, fontsize=7.5, loc="upper left")
 fig.tight_layout(); fig.savefig(OUT / "图P5_合理化的形状.png", dpi=200); plt.close(fig)
 
-# ---------- P6 ----------
+# ---------- P7 合理化的个体差异 ----------
 from scipy.special import expit
 rho = expit(np.array(J("s10_合理化联合模型_ρ逐人.json")["X"])[:, 7])
 iv = J("s11_合理化对前面结论的影响.json")["工具变量：选择 → 报告不挤"]
@@ -90,5 +90,31 @@ axs[1].errorbar(xs, b, yerr=e, fmt="none", ecolor=INK, lw=1, capsize=3)
 cnt = [(rho < 0.05).sum(), ((rho >= 0.05) & (rho <= 0.5)).sum(), (rho > 0.5).sum()]
 axs[1].set_xticks(xs); axs[1].set_xticklabels([f"如实报告者\n（{cnt[0]} 人）", f"中间\n（{cnt[1]} 人）", f"合理化者\n（{cnt[2]} 人）"])
 axs[1].set_ylabel("被习惯推去后报「不挤」\n的概率增加（工具变量）")
-fig.tight_layout(); fig.savefig(OUT / "图P6_合理化的个体差异.png", dpi=200); plt.close(fig)
+fig.tight_layout(); fig.savefig(OUT / "图P7_合理化的个体差异.png", dpi=200); plt.close(fig)
 print("ok")
+
+# ---------- P6 联合模型结构 ----------
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+fig, ax = plt.subplots(figsize=(7.4, 3.6)); ax.set_xlim(0, 10); ax.set_ylim(0, 5); ax.axis("off")
+def box(x, y, w, h, t, fc):
+    ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.04,rounding_size=0.12", fc=fc, ec=INK, lw=0.8))
+    ax.text(x + w / 2, y + h / 2, t, ha="center", va="center", fontsize=8.5, color=INK)
+def arr(p, q, t="", c=INK, ls="-", off=(0, 0.12), rad=0.0):
+    ax.add_patch(FancyArrowPatch(p, q, arrowstyle="-|>", mutation_scale=10, color=c, lw=1.2, ls=ls, connectionstyle=f"arc3,rad={rad}"))
+    if t: ax.text((p[0] + q[0]) / 2 + off[0], (p[1] + q[1]) / 2 + off[1], t, ha="center", fontsize=7.5, color=c)
+LB, LO, LG = "#dbe8f8", "#fbe1d6", "#eeede9"
+box(0.1, 3.6, 1.9, 0.9, "上一轮人数\nN(t−1)", LG)
+box(3.0, 3.6, 2.0, 0.9, "信念 B ~ N(B̄, v)\n类别：挤 / 不挤", LB)
+box(3.0, 0.4, 2.0, 0.9, "习惯痕迹 c\n（过去的选择）", LO)
+box(0.1, 0.4, 1.9, 0.9, "宏观状态\n稳定、偏离", LG)
+box(6.1, 2.0, 1.5, 0.9, "选择 a\n去 / 不去", "white")
+box(8.3, 3.6, 1.6, 0.9, "报告 P\n（预测人数）", "white")
+arr((2.0, 4.05), (3.0, 4.05), "μ, ws, wm")
+arr((5.0, 3.85), (6.25, 2.9), "s：信念 → 选择", BLUE, off=(1.05, 0.05))
+arr((5.0, 0.85), (6.25, 2.0), "κ：习惯 → 选择", ORANGE, off=(1.1, -0.25))
+arr((2.0, 0.85), (3.0, 0.85), "ψ、δ", MUTED)
+arr((5.0, 4.25), (8.3, 4.25), "如实报告（一致时，或 1 − ρ）", BLUE, off=(0, 0.1))
+arr((7.6, 2.6), (8.6, 3.6), "合理化 ρ_i：\n不一致时挪到\n与选择一致的一侧", ORANGE, off=(0.75, -0.55))
+arr((1.05, 3.6), (6.3, 2.35), "λ（推力）", MUTED, ls="--", off=(-1.2, -0.05), rad=0.0)
+fig.tight_layout(); fig.savefig(OUT / "图P6_联合模型结构.png", dpi=200); plt.close(fig)
+print("ok P6")

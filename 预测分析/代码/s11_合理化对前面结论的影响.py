@@ -4,6 +4,7 @@
   2 人内同步（s4）：定向后的模型信念 V 与预测的逐人相关
   3 经验效应（s8）：一致率与心理测量斜率的前后变化；以及工具变量下"选择 → 报告不挤"的效应前后两半是否不同（合理化随经验增强？）
   4 冲突时跟随习惯（s3）：信念（预测类别）与习惯方向冲突时，跟随习惯的比例及其随稳定程度的变化
+  5 可靠性仲裁（s6）：只在如实报告者中，用真实预测误差检验"信念越可靠越听信念"（如实报告者的预测更接近真实信念，是最公平的检验）
 输出：结果/s11_合理化对前面结论的影响.json
 """
 import json
@@ -63,4 +64,14 @@ for lab, gsel in G.items():
     if sel.sum() > 1000:
         q = PL.iv_fe(yk[sel], a[sel], Xc[sel], Z[sel], ii[sel], nm); iv[lab] = dict(效应=q["内生变量"], F=q["第一阶段F"])
 out["工具变量：选择 → 报告不挤"] = iv; print(json.dumps(iv, ensure_ascii=False)[:800])
+# 5 可靠性仲裁（复用 s6 的变量与 logit_fe）
+src6 = open(PL.W / "代码" / "s6_真实预测误差与可靠性仲裁.py", encoding="utf-8").read()
+n6 = {}; exec(src6.split("out = {}")[0], n6)
+rel = {}
+for lab, g in G.items():
+    msk = n6["conflict"] & g[:, None]
+    r, _ = n6["logit_fe"](n6["follow_belief"], [n6["zsc"](n6["R1"], n6["ok"]), n6["zsc"](n6["RH"], n6["ok"])] + n6["ctrl"], msk,
+                          ["信念可靠性 R1", "习惯可靠性"] + n6["cn"])
+    rel[lab] = dict(冲突观测数=int(msk.sum()), **r)
+out["可靠性仲裁（冲突时听从自己预测，logistic 个人固定效应）"] = rel; print(json.dumps(rel, ensure_ascii=False)[:1500])
 PL.save(out, "s11_合理化对前面结论的影响.json")
