@@ -16,10 +16,20 @@ import arb_lib as L
 
 FIT = lambda n: json.loads((L.OUT / "拟合" / f"{n}.json").read_text(encoding="utf-8"))
 SPECS = {"M0": L.Spec(), "RG": L.Spec(ratio=L.MODS, gain=L.MODS), "HRG": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True),
-         "H0": L.Spec(habit=True), "HRGP": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"])}
+         "H0": L.Spec(habit=True), "HRGP": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"]),
+         "HRGPR": L.Spec(ratio=["stab", "dev", "time"], gain=["stab", "dev", "time"], habit=True, push=["stab", "dev"],
+                         bonly=["relB"], honly=["relH"])}
+SPECS["HRGPRS"] = L.Spec(ratio=["stab", "dev", "time"], gain=["stab", "dev", "time"], habit=True, push=["stab", "dev"],
+                         bonly=["relB"], honly=["relH"], spline=True)
 # 中介分解（用 HRG 的估计，关掉某一条"宏观 → 微观"路径）：(拟合名, 改动)
 VARIANTS = {"M0": ("M0", {}), "RG": ("RG", {}), "H0": ("H0", {}), "HRG": ("HRG", {}), "HRGP": ("HRGP", {}),
             "HRGP_关重复推力": ("HRGP", {"no_push": True}),
+            # 新主模型 HRGPR 的中介分解（轮次是个人学习，始终保留）
+            "HRGPR": ("HRGPR", {}),
+            "HRGPR_关可靠性仲裁": ("HRGPR", {"no_rel": True}),
+            "HRGPR_关宏观调节": ("HRGPR", {"no_macro": True}),
+            "HRGPR_关习惯累积": ("HRGPR", {"no_accum": True}),
+            "HRGPR_三条都关": ("HRGPR", {"no_rel": True, "no_macro": True, "no_accum": True}),
             "HRG_关直接比例调节": ("HRG", {"no_ratio": True}),
             "HRG_关习惯累积": ("HRG", {"no_accum": True}),
             "HRG_两条都关": ("HRG", {"no_ratio": True, "no_accum": True})}
@@ -47,20 +57,50 @@ def fingerprint(N, A):
 def abm_one(args):
     name, seed = args
     fname, mod = VARIANTS[name]
+    N, A, extra = simulate(fname, mod, seed)
+    fp = fingerprint(N, A)
+    fp.update(extra)
+    return name, fp
+
+
+def simulate(fname, mod, seed):
+    """一次闭环模拟，返回 (人数序列 N, 选择矩阵 A, 附加量)。
+    mod 可选键：no_ratio / no_rel / no_macro / no_accum / no_push（关掉某条通路）；
+      zero_mods=[...]：把这些调节变量对比例、增益、推力的作用全部置 0（= 固定在均值）；
+      phi_scale={参数名: 倍数}：把某个共用参数乘以倍数（剂量—反应）；psi_stab_i、lam_coef 见下。"""
     spec, fit = SPECS[fname], FIT(fname)
     X = np.array(fit["X"]); phi = np.array([fit["shared"][k] for k in spec.names()]); sig = fit["sigma"]
+    for k_, f_ in mod.get("phi_scale", {}).items():
+        phi[spec.names().index(k_)] *= f_
+    for k_, v_ in mod.get("phi_set", {}).items():                   # 直接设定某些共用参数（如只关掉某一通道）
+        phi[spec.names().index(k_)] = v_
     lam, thR, thG, aH = spec.unpack(phi)
+    thBo, thHo = spec.unpack_only(phi)
+    if spec.spline and "lam_coef" not in mod:
+        mod = dict(mod, lam_coef=np.r_[lam, spec.unpack_spline(phi)])
+    for m_ in mod.get("zero_mods", []):
+        thR = {m: (0.0 if m == m_ else v) for m, v in thR.items()}
+        thG = {m: (0.0 if m == m_ else v) for m, v in thG.items()}
+        thBo = {m: (0.0 if m == m_ else v) for m, v in thBo.items()}
+        thHo = {m: (0.0 if m == m_ else v) for m, v in thHo.items()}
     if mod.get("no_ratio"):
         thR = {m: 0.0 for m in thR}
+    if mod.get("no_rel"):
+        thBo = {m: 0.0 for m in thBo}; thHo = {m: 0.0 for m in thHo}
+    if mod.get("no_macro"):                                       # 关掉稳定、偏离对权重与推力的作用
+        thR = {m: (0.0 if m in ("stab", "dev") else v) for m, v in thR.items()}
+        thG = {m: (0.0 if m in ("stab", "dev") else v) for m, v in thG.items()}
     if mod.get("no_accum"):
         aH = 1.0
-    psi = {} if mod.get("no_push") else spec.unpack_push(phi)
+    psi = {} if (mod.get("no_push") or mod.get("no_macro")) else spec.unpack_push(phi)
+    psi = {m: v for m, v in psi.items() if m not in mod.get("zero_mods", [])}
     zs = lambda m, v: (v - STD[m][0]) / STD[m][1]
     rng = np.random.default_rng(seed)
     n = X.shape[0]
     rho, beta, kap, b = expit(X[:, 0]), X[:, 1], X[:, 2], X[:, 3]
     BL = np.full(n, 1 / 3); BH = np.full(n, 1 / 3); H = np.full(n, .5); c = np.zeros(n)
     relB = np.full(n, .5); relH = np.full(n, .5); a_prev = None
+    sB = np.full(n, .5); sH = np.full(n, .5)                     # 两个系统的建议成绩（可靠性仲裁）
     A = np.zeros((n, L.T)); N = np.zeros(L.T); stab = 0.0; rbar = np.zeros(L.T)
     for t in range(L.T):
         lag = (N[t - 1] - L.CAP) / 10 if t > 0 else 0.0
@@ -70,13 +110,33 @@ def abm_one(args):
         mrel = zs("rel", relB - relH)
         r = sum((thR[m] * (mrel if m == "rel" else zs(m, mods[m])) for m in thR), np.zeros(n))
         g = sum((thG[m] * (mrel if m == "rel" else zs(m, mods[m])) for m in thG), np.zeros(n))
-        push = sum((psi[m] * zs(m, mods[m]) for m in psi), 0.0)
-        z = b + lam * lag + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2) + kap * c * np.exp(-r / 2)) + push * c + sig * rng.standard_normal()
+        psi_i = mod.get("psi_stab_i")                             # 可选：每人一个稳定推力（替代共用 ψ_stab）
+        push = sum((psi[m] * zs(m, mods[m]) for m in psi if not (m == "stab" and psi_i is not None)), 0.0)
+        if psi_i is not None:
+            push = push + psi_i * zs("stab", mods["stab"])
+        pers = dict(relB=zs("relB", sB) if "relB" in STD else 0.0, relH=zs("relH", sH) if "relH" in STD else 0.0)
+        eB = sum((thBo[m] * (pers[m] if m in pers else zs(m, mods[m])) for m in thBo), np.zeros(n))
+        eH = sum((thHo[m] * (pers[m] if m in pers else zs(m, mods[m])) for m in thHo), np.zeros(n))
+        stt = mod.get("stab_terms")                               # 可选：稳定的任意编码（按稳定 0–4 查表的信念、惯性、推力三条作用）
+        if stt is not None:
+            kk = int(min(stab, 4))
+            eB = eB + stt["eB"][kk]; eH = eH + stt["eH"][kk]; push = push + stt["psi"][kk]
+        V = BL - 0.7 * BH
+        lamc = mod.get("lam_coef")                                # 可选：分段样条的分级反应（替代线性 λ·LAG）
+        if lamc is not None:
+            dd = lag * 10
+            lamterm = float(np.dot(lamc, [dd / 10, max(dd - 5, 0) / 10, max(dd - 10, 0) / 10, max(-dd - 5, 0) / 10, max(-dd - 10, 0) / 10]))
+        else:
+            lamterm = lam * lag
+        z = b + lamterm + np.exp(g) * (beta * V * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + push * c + sig * rng.standard_normal()
+        recB = (beta * V > 0).astype(float); recH = (c > 0).astype(float)
         a = (rng.random(n) < expit(z)).astype(float)
         A[:, t] = a; N[t] = a.sum(); rbar[t] = float(np.mean(r))
         oth = N[t] - a
         Gt = (oth <= L.CAP - 1).astype(float); St = (oth >= L.CAP + 1).astype(float)
         relB = (1 - L.REL_RATE) * relB + L.REL_RATE * (1 - (np.abs(Gt - BL) + np.abs(St - BH)) / 2)
+        sB = (1 - L.REL_RATE) * sB + L.REL_RATE * (recB * Gt + (1 - recB) * St)
+        sH = (1 - L.REL_RATE) * sH + L.REL_RATE * (recH * Gt + (1 - recH) * St)
         if a_prev is not None:
             relH = (1 - L.REL_RATE) * relH + L.REL_RATE * (a_prev * Gt + (1 - a_prev) * St)
         a_prev = a
@@ -85,11 +145,10 @@ def abm_one(args):
             H += aH * (a - H); c = 2 * H - 1
         else:
             c = 2 * a - 1
-    fp = fingerprint(N, A)
-    fp["habit_strength"] = float(np.mean(np.abs(c)))                         # 最后一轮的平均习惯强度 |c|
-    fp["rbar_sd"] = float(rbar[2:].std())                                    # 群体平均比例随时间波动的幅度
-    fp["rbar_corr_crowdflip"] = float(np.corrcoef(rbar[3:], (N[2:-1] > L.CAP) != (N[1:-2] > L.CAP))[0, 1]) if spec.ratio and np.std(rbar[3:]) > 0 else 0.0
-    return name, fp
+    extra = dict(habit_strength=float(np.mean(np.abs(c))),                    # 最后一轮的平均习惯强度 |c|
+                 rbar_sd=float(rbar[2:].std()),                               # 群体平均比例随时间波动的幅度
+                 rbar_corr_crowdflip=float(np.corrcoef(rbar[3:], (N[2:-1] > L.CAP) != (N[1:-2] > L.CAP))[0, 1]) if spec.ratio and np.std(rbar[3:]) > 0 else 0.0)
+    return N, A, extra
 
 
 def p2(sim, ob):
@@ -98,7 +157,9 @@ def p2(sim, ob):
 
 
 if __name__ == "__main__":
-    names = [n for n, (fn, _) in VARIANTS.items() if (L.OUT / "拟合" / f"{fn}.json").exists()]
+    want = [a for a in sys.argv[1:] if not a.endswith(".json")]
+    outname = next((a for a in sys.argv[1:] if a.endswith(".json")), "闭环.json")
+    names = [n for n, (fn, _) in VARIANTS.items() if (L.OUT / "拟合" / f"{fn}.json").exists() and (not want or n in want)]
     with Pool(4) as pool:
         res = pool.map(abm_one, [(n, 300000 + 7919 * i + 101 * k) for k, n in enumerate(names) for i in range(B)])
     obs = fingerprint(L.ATT, L.A_REAL)
@@ -113,7 +174,8 @@ if __name__ == "__main__":
         Fs = d2 * B / (B + 1) * (B - k) / (k * (B - 1))
         out["人群"][n] = dict(联合p=float(F_dist.sf(Fs, k, B - k)),
                              **{key: dict(均值=float(np.nanmean(arr[key])), p=p2(arr[key], obs[key]) if key in obs else None) for key in arr})
-    L.save_json(out, L.OUT / "闭环.json")
+    L.save_json(out, L.OUT / outname)
     for n, v in out["人群"].items():
         print(n, "联合p=%.3f" % v["联合p"], {k: round(v[k]["均值"], 3) for k in ("sd", "acf1", "acf4", "sq_acf1", "D", "switch", "rbar_sd")})
-    (L.CKPT / "abm_arb.done").write_text("ok")
+    if outname == "闭环.json":
+        (L.CKPT / "abm_arb.done").write_text("ok")

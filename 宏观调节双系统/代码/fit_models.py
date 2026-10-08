@@ -33,6 +33,13 @@ MODELS["HRG_dev仅信念"] = L.Spec(ratio=_nodev, gain=_nodev, habit=True, bonly
 MODELS["HRGP"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"])
 MODELS["HRGP-stab"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["dev"])
 MODELS["HRGP-dev"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab"])
+# 可靠性仲裁（各系统看自己的建议成绩，Lee et al., 2014 式）：在 HRGP 中把原可靠性定义换掉
+_norel = [x for x in L.MODS if x != "rel"]
+MODELS["HRGP-rel"] = L.Spec(ratio=_norel, gain=_norel, habit=True, push=["stab", "dev"])
+MODELS["HRGPR"] = L.Spec(ratio=_norel, gain=_norel, habit=True, push=["stab", "dev"], bonly=["relB"], honly=["relH"])
+MODELS["HRGPR4"] = L.Spec(ratio=_norel + ["relB", "relH"], gain=_norel + ["relB", "relH"], habit=True, push=["stab", "dev"])
+# 饱和分级反应（样条）：闭环第 ③ 环发现它决定 φ0、φn 与波动聚集
+MODELS["HRGPRS"] = L.Spec(ratio=_norel, gain=_norel, habit=True, push=["stab", "dev"], bonly=["relB"], honly=["relH"], spline=True)
 DIR = L.OUT / "拟合"
 
 
@@ -48,7 +55,8 @@ def job(name):
     if spec.habit:
         phi0[-1] = 3.0                                   # α_H 起点 ≈ 0.95（接近原模型）
     log(f"开始 {name}: {spec.to_dict()}")
-    X, phi, f, hist = L.joint_fit(spec, L.A_REAL, L.G_REAL, L.S_REAL, L.ATT, L.base_X(), phi0, log=log)
+    X, phi, f, hist = L.joint_fit(spec, L.A_REAL, L.G_REAL, L.S_REAL, L.ATT, L.base_X(), phi0, log=log,
+                                  ckpt=L.CKPT / f"轮_{name}.npz")
     z = L.run(X, spec, phi, L.A_REAL, L.G_REAL, L.S_REAL, L.ATT, out="z")
     sig, ll_sig = L.marginal_sigma(z, L.A_REAL)
     res = dict(name=name, spec=spec.to_dict(), shared=dict(zip(spec.names(), phi.tolist())), k_shared=spec.k,

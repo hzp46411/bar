@@ -78,21 +78,22 @@ def base_lambda():
 class Spec:
     """ratio / gain：哪些调节变量进入 r、g；habit：是否用习惯痕迹。共用参数向量 = [λ, θR..., θG..., (logit α_H)]。"""
 
-    def __init__(self, ratio=(), gain=(), habit=False, bonly=(), honly=(), push=()):
+    def __init__(self, ratio=(), gain=(), habit=False, bonly=(), honly=(), push=(), spline=False):
         # bonly / honly：只作用于信念权重 / 只作用于惯性权重的调节变量（用于把"比例 + 增益"拆成两个系统各自的检验）
         # push：加法"重复推力" ψ·c·M —— 不论 κ 正负，人人都被推向自己习惯的方向（乘法写法在重复型与交替型之间会相互抵消）
         self.ratio, self.gain, self.habit = list(ratio), list(gain), bool(habit)
         self.bonly, self.honly, self.push = list(bonly), list(honly), list(push)
+        self.spline = bool(spline)          # 分级反应改为分段样条：λ·d + 4 个拐点项（偏离 ±5、±10 人）
 
     @property
     def k(self):
-        return 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push) + int(self.habit)
+        return 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push) + 4 * int(self.spline) + int(self.habit)
 
     def unpack(self, phi):
         i = 1
         thR = dict(zip(self.ratio, phi[i:i + len(self.ratio)])); i += len(self.ratio)
         thG = dict(zip(self.gain, phi[i:i + len(self.gain)])); i += len(self.gain)
-        i += len(self.bonly) + len(self.honly) + len(self.push)
+        i += len(self.bonly) + len(self.honly) + len(self.push) + 4 * int(self.spline)
         aH = expit(phi[i]) if self.habit else 1.0
         return phi[0], thR, thG, aH
 
@@ -102,16 +103,24 @@ class Spec:
         thHo = dict(zip(self.honly, phi[i:i + len(self.honly)]))
         return thBo, thHo
 
+    def unpack_spline(self, phi):
+        if not self.spline:
+            return np.zeros(4)
+        i = 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push)
+        return np.asarray(phi[i:i + 4], float)
+
     def unpack_push(self, phi):
         i = 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly)
         return dict(zip(self.push, phi[i:i + len(self.push)]))
 
     def bounds(self):
-        return [(-3, 3)] + [(-3, 3)] * (len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push)) + ([(-7, 7)] if self.habit else [])
+        return ([(-3, 3)] + [(-3, 3)] * (len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push))
+                + [(-3, 3)] * (4 * int(self.spline)) + ([(-7, 7)] if self.habit else []))
 
     def names(self):
         return (["lam"] + [f"θR_{m}" for m in self.ratio] + [f"θG_{m}" for m in self.gain] + [f"θB_{m}" for m in self.bonly]
-                + [f"θH_{m}" for m in self.honly] + [f"ψ_{m}" for m in self.push] + (["logit_aH"] if self.habit else []))
+                + [f"θH_{m}" for m in self.honly] + [f"ψ_{m}" for m in self.push]
+                + (["λ_+5", "λ_+10", "λ_-5", "λ_-10"] if self.spline else []) + (["logit_aH"] if self.habit else []))
 
     def to_dict(self):
         d = dict(ratio=self.ratio, gain=self.gain, habit=self.habit)
@@ -119,13 +128,23 @@ class Spec:
             d.update(bonly=self.bonly, honly=self.honly)
         if self.push:
             d.update(push=self.push)
+        if self.spline:
+            d.update(spline=True)
         return d
 
 
 def load_std():
     p = OUT / "标准化常数.json"
     if p.exists():
-        return json.loads(p.read_text(encoding="utf-8"))
+        std = json.loads(p.read_text(encoding="utf-8"))
+        if "relB" not in std and (OUT / "拟合" / "HRGP.json").exists():
+            f = json.loads((OUT / "拟合" / "HRGP.json").read_text(encoding="utf-8"))
+            sp = Spec(**f["spec"]); Xh = np.array(f["X"]); ph = np.array([f["shared"][k] for k in sp.names()])
+            for m in ("relB", "relH"):
+                v = run(Xh, sp, ph, A_REAL, G_REAL, S_REAL, ATT, out=m, std=dict(std, relB=[0, 1], relH=[0, 1]))[:, 1:]
+                std[m] = [float(v.mean()), float(v.std())]
+            p.write_text(json.dumps(std, ensure_ascii=False, indent=1), encoding="utf-8")
+        return std
     # 第一次：用真实数据与起点参数计算并保存
     pm, _ = public_mods(ATT)
     rel = run(base_X(), Spec(), np.r_[base_lambda()], A_REAL, G_REAL, S_REAL, ATT, out="rel", std={"rel": [0, 1]})
@@ -146,30 +165,42 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
     std = std or load_std()
     lam, thR, thG, aH = spec.unpack(phi)
     pm, lag = public_mods(N)
+    kn = spec.unpack_spline(phi)
+    if spec.spline:                         # 拐点项：(d−5)+、(d−10)+、(−d−5)+、(−d−10)+，单位 10 人
+        dd = lag * 10
+        lag_extra = (kn[0] * np.maximum(dd - 5, 0) + kn[1] * np.maximum(dd - 10, 0) + kn[2] * np.maximum(-dd - 5, 0) + kn[3] * np.maximum(-dd - 10, 0)) / 10
+    else:
+        lag_extra = np.zeros(T)
     zs = lambda m, v: (v - std[m][0]) / std[m][1]
-    r_pub = sum((thR[m] * zs(m, pm[m]) for m in thR if m != "rel"), np.zeros(T))
-    g_pub = sum((thG[m] * zs(m, pm[m]) for m in thG if m != "rel"), np.zeros(T))
-    tR_rel, tG_rel = thR.get("rel", 0.0), thG.get("rel", 0.0)
+    r_pub = sum((thR[m] * zs(m, pm[m]) for m in thR if m not in ("rel", "relB", "relH")), np.zeros(T))
+    g_pub = sum((thG[m] * zs(m, pm[m]) for m in thG if m not in ("rel", "relB", "relH")), np.zeros(T))
     thBo, thHo = spec.unpack_only(phi)
-    eB_pub = sum((thBo[m] * zs(m, pm[m]) for m in thBo if m != "rel"), np.zeros(T))
-    eH_pub = sum((thHo[m] * zs(m, pm[m]) for m in thHo if m != "rel"), np.zeros(T))
-    tB_rel, tH_rel = thBo.get("rel", 0.0), thHo.get("rel", 0.0)
+    eB_pub = sum((thBo[m] * zs(m, pm[m]) for m in thBo if m not in ("rel", "relB", "relH")), np.zeros(T))
+    eH_pub = sum((thHo[m] * zs(m, pm[m]) for m in thHo if m not in ("rel", "relB", "relH")), np.zeros(T))
     psi = spec.unpack_push(phi)
-    p_pub = sum((psi[m] * zs(m, pm[m]) for m in psi if m != "rel"), np.zeros(T))
-    p_rel = psi.get("rel", 0.0)
-    use_rel = ("rel" in thR) or ("rel" in thG) or ("rel" in thBo) or ("rel" in thHo) or ("rel" in psi) or out == "rel"
+    PERS = ("rel", "relB", "relH")                          # 每人不同、在线计算的调节变量
+    p_pub = sum((psi[m] * zs(m, pm[m]) for m in psi if m not in PERS), np.zeros(T))
+    # 个人变量的系数：(θR, θG, θB_only, θH_only, ψ)
+    pers = {m: (thR.get(m, 0.0), thG.get(m, 0.0), thBo.get(m, 0.0), thHo.get(m, 0.0), psi.get(m, 0.0))
+            for m in PERS if any(m in d for d in (thR, thG, thBo, thHo, psi))}
+    use_rel = bool(pers) or out == "rel"
     rows = X.shape[0]
     rho, beta, kap, b = expit(X[:, 0]), X[:, 1], X[:, 2], X[:, 3]
     BL = np.full(rows, 1 / 3); BH = np.full(rows, 1 / 3); H = np.full(rows, 0.5); c = np.zeros(rows)
     relB = np.full(rows, 0.5); relH = np.full(rows, 0.5); a_prev = None
-    nll = np.zeros(rows); Z = np.zeros((rows, T)) if out in ("z", "rel", "w") else None
+    sB = np.full(rows, 0.5); sH = np.full(rows, 0.5)             # 信念建议成绩、习惯建议成绩（指数加权）
+    nll = np.zeros(rows); Z = np.zeros((rows, T)) if out in ("z", "rel", "w", "relB", "relH") else None
     Rr = np.zeros((rows, T)) if out == "w" else None; Gg = np.zeros((rows, T)) if out == "w" else None
     for t in range(T if rng is not None else win[1]):
         r, g, eB, eH, ps = r_pub[t], g_pub[t], eB_pub[t], eH_pub[t], p_pub[t]
-        if use_rel:
-            mrel = zs("rel", relB - relH)
-            r = r + tR_rel * mrel; g = g + tG_rel * mrel; eB = eB + tB_rel * mrel; eH = eH + tH_rel * mrel; ps = ps + p_rel * mrel
-        z = b + lam * lag[t] + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + ps * c
+        if pers:
+            cur = dict(rel=relB - relH, relB=sB, relH=sH)
+            for m, (cR, cG, cB, cH, cP) in pers.items():
+                mz = zs(m, cur[m])
+                r = r + cR * mz; g = g + cG * mz; eB = eB + cB * mz; eH = eH + cH * mz; ps = ps + cP * mz
+        V = BL - 0.7 * BH
+        z = b + lam * lag[t] + lag_extra[t] + np.exp(g) * (beta * V * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + ps * c
+        recB = (beta * V > 0).astype(float); recH = (c > 0).astype(float)   # 两个系统此刻的建议（用于更新建议成绩）
         if rng is not None:
             zz = z + (sigma * eps[t] if eps is not None else 0.0)
             A[:, t] = rng.random(rows) < expit(zz)
@@ -178,12 +209,16 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
             Z[:, t] = z
         elif out == "rel":
             Z[:, t] = relB - relH
+        elif out in ("relB", "relH"):
+            Z[:, t] = sB if out == "relB" else sH
         elif out == "w":
             Rr[:, t] = r; Gg[:, t] = g
         if t >= win[0] and out == "nll":
             nll += np.logaddexp(0, z) - a * z
         # —— 看到本轮结果之后的更新 ——
         relB = (1 - REL_RATE) * relB + REL_RATE * (1 - (np.abs(G[:, t] - BL) + np.abs(S[:, t] - BH)) / 2)
+        sB = (1 - REL_RATE) * sB + REL_RATE * (recB * G[:, t] + (1 - recB) * S[:, t])
+        sH = (1 - REL_RATE) * sH + REL_RATE * (recH * G[:, t] + (1 - recH) * S[:, t])
         if a_prev is not None:
             relH = (1 - REL_RATE) * relH + REL_RATE * (a_prev * G[:, t] + (1 - a_prev) * S[:, t])
         a_prev = a.copy()
@@ -245,14 +280,23 @@ def fit_shared(spec, X, phi0, A, G, S, N, std=None):
     return res.x, res.fun
 
 
-def joint_fit(spec, A, G, S, N, X0, phi0, max_rounds=8, tol=0.05, rand_starts=2, seed=0, log=print, std=None, later_basins=2):
+def joint_fit(spec, A, G, S, N, X0, phi0, max_rounds=8, tol=0.05, rand_starts=2, seed=0, log=print, std=None, later_basins=2, ckpt=None):
     """交替最大化：个体步（多起点）↔ 共用步，直到总 NLL 的改善 < tol。
-    第 1 轮起点 = 当前值 + 4 个盆地起点 + rand_starts 个随机起点；之后各轮 = 当前值 + later_basins 个盆地起点。"""
+    第 1 轮起点 = 当前值 + 4 个盆地起点 + rand_starts 个随机起点；之后各轮 = 当前值 + later_basins 个盆地起点。
+    ckpt：每轮结束后把 (X, φ, 历史) 存到该 .npz；再次调用时从最后完成的一轮继续（容器重启后不必从头来）。"""
     std = std or load_std()
     X, phi = X0.copy(), np.array(phi0, float)
     hist = []
     prev = np.inf
-    for rd in range(max_rounds):
+    start = 0
+    if ckpt is not None and Path(ckpt).exists():
+        d = np.load(ckpt)
+        X, phi, hist = d["X"], d["phi"], d["hist"].tolist()
+        start = len(hist); prev = hist[-1] if hist else np.inf
+        log(f"  从检查点继续：已完成 {start} 轮，总 NLL = {prev:.3f}")
+        if start >= 2 and hist[-2] - hist[-1] < tol:
+            start = max_rounds
+    for rd in range(start, max_rounds):
         inits = [X] + (basin_starts(X) if rd == 0 else basin_starts(X)[:later_basins])
         X, f = fit_individuals(spec, phi, A, G, S, N, inits, rand_starts if rd == 0 else 0, seed + rd, std)
         if spec.k > 0:
@@ -261,6 +305,8 @@ def joint_fit(spec, A, G, S, N, X0, phi0, max_rounds=8, tol=0.05, rand_starts=2,
             tot = f.sum()
         hist.append(float(tot))
         log(f"  第 {rd + 1} 轮：总 NLL = {tot:.3f}  共用 = {np.round(phi, 4).tolist()}")
+        if ckpt is not None:
+            np.savez(ckpt, X=X, phi=phi, hist=np.array(hist))
         if prev - tot < tol:
             break
         prev = tot
