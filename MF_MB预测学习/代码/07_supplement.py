@@ -2,7 +2,7 @@
   (a) 各模型参数估计值的描述统计（中位数、四分位距）
   (b) 探索性补充（不在原方案内）：按 BIC 最优模型分组，比较各组的预测准确性
 
-输出：结果/参数汇总.csv、结果/分组预测准确性.csv、结果/分组预测准确性_逐人.csv
+输出：结果/参数汇总.csv、结果/分组行为特征.csv、结果/分组预测准确性.csv、结果/分组预测准确性_逐人.csv
 """
 import os
 
@@ -31,6 +31,16 @@ print(psum.round(3).to_string(index=False))
 # 混合模型中 BIC 归类为 MF / MB 的被试的 w
 h = fits[fits.model == "Hybrid"].set_index("subject")
 print("混合模型 w 的中位数（按 BIC 最优模型分组）:", h.w.groupby(best).median().round(3).to_dict())
+
+# 各组的行为特征（条件差、斜率），以及超出 MB 可表达范围（斜率 < -0.2）的人数
+sig = pd.read_csv(os.path.join(RES_DIR, "行为特征_真实.csv")).set_index("subject")
+sig_by = sig.groupby(best)[["slope", "cond_diff"]].mean()
+sig_by["n"] = best.value_counts()
+sig_by.loc["全部", ["slope", "cond_diff"]] = sig[["slope", "cond_diff"]].mean().values
+sig_by.loc["斜率<-0.2 的人数", "n"] = int((sig.slope < -0.2).sum())
+sig_by.loc["斜率>0.2 的人数", "n"] = int((sig.slope > 0.2).sum())
+sig_by.to_csv(os.path.join(RES_DIR, "分组行为特征.csv"))
+print(sig_by.round(3))
 
 # (b) 分组预测准确性
 

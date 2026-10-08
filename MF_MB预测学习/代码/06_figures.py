@@ -149,7 +149,7 @@ if os.path.exists(rec_path):
             a.set_ylabel("估计值", fontsize=9)
         for a in ax[len(panels):]:
             a.axis("off")
-        fig.suptitle(f"参数恢复（{tag}，每个模型 100 名合成被试）", y=1.0)
+        fig.suptitle(f"参数恢复（{tag.replace('_', ' · ')}，每个模型 100 名合成被试）", y=1.0)
         fig.tight_layout()
         save(fig, f"图5_参数恢复_{tag}.png")
 
@@ -168,7 +168,7 @@ if os.path.exists(rec_path):
         short = [MODELS[m].label.split(" ", 1)[1] for m in MODEL_NAMES]
         a.set_xticks(range(4), short)
         a.set_yticks(range(4), short)
-        a.set(xlabel="BIC 判定的最优模型", ylabel="生成数据的模型", title=f"模型恢复：{tag}")
+        a.set(xlabel="BIC 判定的最优模型", ylabel="生成数据的模型", title=f"模型恢复：{tag.replace('_', ' · ')}")
         a.grid(False)
     fig.tight_layout()
     save(fig, "图6_模型恢复.png")
