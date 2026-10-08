@@ -38,9 +38,9 @@ fig.tight_layout(); fig.savefig(OUT / "图9_换人节律.png", dpi=200); plt.clo
 # ---------- 图 10 ----------
 K = J(f"第三环_敲除_{M}.json")["变体"]
 rows = [("人数 SD", "sd"), ("人数 ACF1", "acf1"), ("负反馈强度 φ0", "φ0"), ("大偏离饱和 φn", "φn"), ("波动聚集", "sq_acf1"),
-        ("长期稳定后的回调 φs", "φs"), ("换人率波动", "换人率_sd"), ("换人对偏离的反应", "换人_偏离斜率"), ("换人率自相关", "换人率_acf1"),
+        ("长期稳定后的回调 φs", "φs"), ("换人率波动", "换人率_sd"), ("换人对稳定的反应", "换人_稳定斜率"), ("换人对偏离的反应", "换人_偏离斜率"), ("换人率自相关", "换人率_acf1"),
         ("群体效率", "效率"), ("收益不平等", "不平等")]
-fig, ax = plt.subplots(figsize=(6.0, 3.8))
+fig, ax = plt.subplots(figsize=(6.0, 4.1))
 y = np.arange(len(rows))[::-1]
 b = [K["只关信念通道"][k]["差(SD)"] for _, k in rows]; h = [K["只关惯性通道"][k]["差(SD)"] for _, k in rows]
 ax.barh(y + 0.18, b, height=0.34, color=BLUE, label="只关信念通道的调节")
@@ -50,9 +50,9 @@ for v in (-2, 2):
     ax.axvline(v, color=GREY, lw=0.6, ls=":")
 ax.set_yticks(y); ax.set_yticklabels([r[0] for r in rows])
 ax.set_xlabel("相对完整模型的变化（以完整模型模拟 SD 为单位）")
-for yy in (4.5, 1.5):
+for yy in (5.5, 1.5):
     ax.axhline(yy, color=GREY, lw=0.6)
-for yy, txt in ((10.45, "水平（多少人去）"), (4.42, "结构（谁换、何时换）"), (1.42, "福利")):
+for yy, txt in ((11.45, "水平（多少人去）"), (5.42, "结构（谁换、何时换）"), (1.42, "福利")):
     ax.text(-6.5, yy, txt, ha="left", va="top", fontsize=8, color=MUTED)
 ax.legend(frameon=False, fontsize=8, loc="upper left", bbox_to_anchor=(0.0, 0.9))
 fig.tight_layout(); fig.savefig(OUT / "图10_两个通道的宏观足迹.png", dpi=200); plt.close(fig)

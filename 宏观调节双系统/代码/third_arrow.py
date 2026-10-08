@@ -56,8 +56,9 @@ def structure(N, A):
     sw = (A[:, 1:] != A[:, :-1]).mean(0)                                    # 每轮换选的比例（换人率）
     out["换人率"] = float(sw.mean()); out["换人率_sd"] = float(sw.std()); out["换人率_acf1"] = acf(sw, 1)
     # 换人对上一轮宏观状态的依赖（宏观 → 换人）：sw_t ~ |d_{t-1}| + 稳定_{t-1}
-    ad = np.abs(d[:-1]) / 10; s1 = st[:-1]
-    Xr = np.column_stack([np.ones(T - 2), ad[1:], s1[1:]])
+    # sw[j] 是第 j+1 轮的换选；它对应的上一轮偏离是 |d[j]|，决策前已知的稳定是 st[j+1]
+    ad = np.abs(d[:-1]) / 10
+    Xr = np.column_stack([np.ones(T - 2), ad[1:], st[2:]])
     b, *_ = np.linalg.lstsq(Xr, sw[1:], rcond=None)
     out["换人_偏离斜率"], out["换人_稳定斜率"] = float(b[1]), float(b[2])
     # 换人是否"配对"：净变化 |ΔN| 相对于换选总数（越小 = 换进与换出越平衡）
