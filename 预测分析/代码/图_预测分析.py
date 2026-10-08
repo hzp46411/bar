@@ -118,3 +118,35 @@ arr((7.6, 2.6), (8.6, 3.6), "合理化 ρ_i：\n不一致时挪到\n与选择一
 arr((1.05, 3.6), (6.3, 2.35), "λ（推力）", MUTED, ls="--", off=(-1.2, -0.05), rad=0.0)
 fig.tight_layout(); fig.savefig(OUT / "图P6_联合模型结构.png", dpi=200); plt.close(fig)
 print("ok P6")
+
+# ---------- P8 ACF4：4 轮前人数的影响在选择里、不在预测里；加上它，闭环就能复现 ACF4 ----------
+d13 = J("s13_四轮前与ACF4.json")["个体回归"]; d13b = J("s13b_四轮项与闭环ACF4.json")
+fig, axs = plt.subplots(1, 2, figsize=(7.6, 3.0))
+ks = np.arange(1, 7)
+for lab, key, col, sc, off in (("选择残差（a − HRGPR，× 100 人）", "选择残差（a − HRGPR 概率）", ORANGE, 100, -0.12),
+                               ("预测（如实报告者）", "预测：如实报告者", BLUE, 1, 0.12)):
+    b = np.array([d13[key][f"N(t−{k})"]["b"] for k in ks]) * sc; se = np.array([d13[key][f"N(t−{k})"]["se"] for k in ks]) * sc
+    axs[0].errorbar(ks + off, b, yerr=1.96 * se, fmt="o", color=col, ms=4, capsize=2, lw=1, label=lab)
+axs[0].axhline(0, color=MUTED, lw=0.7); axs[0].set_xticks(ks); axs[0].set_xticklabels([f"t−{k}" for k in ks])
+axs[0].set_xlabel("哪一轮的人数（每 10 人）"); axs[0].set_ylabel("系数（人）"); axs[0].legend(frameon=False, fontsize=7.5, loc="lower left")
+lags = ["acf1", "acf2", "acf3", "acf4"]; x = np.arange(4)
+for j, (lab, col) in enumerate((("HRGPR", GREY), ("HRGPR + δ4", ORANGE))):
+    mu = [d13b[lab][k]["均值"] for k in lags]; sd = [d13b[lab][k]["SD"] for k in lags]
+    axs[1].bar(x + (j - 0.5) * 0.36, mu, width=0.34, color=col, edgecolor="white", label=f"闭环模拟：{lab}")
+    axs[1].errorbar(x + (j - 0.5) * 0.36, mu, yerr=sd, fmt="none", ecolor=INK, lw=0.8, capsize=2)
+axs[1].scatter(x, [d13b["真实"][k] for k in lags], marker="D", color=INK, s=22, zorder=3, label="真实人数")
+axs[1].axhline(0, color=MUTED, lw=0.7); axs[1].set_xticks(x); axs[1].set_xticklabels(["ACF1", "ACF2", "ACF3", "ACF4"])
+axs[1].set_ylabel("自相关"); axs[1].legend(frameon=False, fontsize=7.5, loc="lower right")
+fig.tight_layout(); fig.savefig(OUT / "图P8_四轮前与ACF4.png", dpi=200); plt.close(fig)
+
+# ---------- P9 从预测估出的学习率 vs 从选择估出的学习率 ----------
+d12 = J("s12_BBL信念与预测_BBL.json"); rp = np.array(d12["ρᴾ"]); rc = np.array(d12["ρ_选择（HRGPR）"])
+from scipy.stats import spearmanr
+fig, ax = plt.subplots(figsize=(4.4, 3.6))
+jit = np.random.default_rng(1).uniform(-0.012, 0.012, (2, len(rp)))
+ax.scatter(np.clip(rc, 0, 1) + jit[0], np.clip(rp, 0, 1) + jit[1], s=16, color=BLUE, edgecolor="white", lw=0.5)
+ax.plot([0, 1], [0, 1], color=MUTED, lw=0.8, ls=":")
+ax.set_xlabel("从选择估出的学习率 ρ（HRGPR）"); ax.set_ylabel("从预测估出的学习率 ρᴾ")
+ax.set_title(f"Spearman = {spearmanr(rp, rc)[0]:.2f}", fontsize=9)
+fig.tight_layout(); fig.savefig(OUT / "图P9_两种学习率.png", dpi=200); plt.close(fig)
+print("ok P8 P9")
