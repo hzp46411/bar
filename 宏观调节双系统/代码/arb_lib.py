@@ -125,7 +125,15 @@ class Spec:
 def load_std():
     p = OUT / "标准化常数.json"
     if p.exists():
-        return json.loads(p.read_text(encoding="utf-8"))
+        std = json.loads(p.read_text(encoding="utf-8"))
+        if "relB" not in std and (OUT / "拟合" / "HRGP.json").exists():
+            f = json.loads((OUT / "拟合" / "HRGP.json").read_text(encoding="utf-8"))
+            sp = Spec(**f["spec"]); Xh = np.array(f["X"]); ph = np.array([f["shared"][k] for k in sp.names()])
+            for m in ("relB", "relH"):
+                v = run(Xh, sp, ph, A_REAL, G_REAL, S_REAL, ATT, out=m, std=dict(std, relB=[0, 1], relH=[0, 1]))[:, 1:]
+                std[m] = [float(v.mean()), float(v.std())]
+            p.write_text(json.dumps(std, ensure_ascii=False, indent=1), encoding="utf-8")
+        return std
     # 第一次：用真实数据与起点参数计算并保存
     pm, _ = public_mods(ATT)
     rel = run(base_X(), Spec(), np.r_[base_lambda()], A_REAL, G_REAL, S_REAL, ATT, out="rel", std={"rel": [0, 1]})
@@ -147,29 +155,35 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
     lam, thR, thG, aH = spec.unpack(phi)
     pm, lag = public_mods(N)
     zs = lambda m, v: (v - std[m][0]) / std[m][1]
-    r_pub = sum((thR[m] * zs(m, pm[m]) for m in thR if m != "rel"), np.zeros(T))
-    g_pub = sum((thG[m] * zs(m, pm[m]) for m in thG if m != "rel"), np.zeros(T))
-    tR_rel, tG_rel = thR.get("rel", 0.0), thG.get("rel", 0.0)
+    r_pub = sum((thR[m] * zs(m, pm[m]) for m in thR if m not in ("rel", "relB", "relH")), np.zeros(T))
+    g_pub = sum((thG[m] * zs(m, pm[m]) for m in thG if m not in ("rel", "relB", "relH")), np.zeros(T))
     thBo, thHo = spec.unpack_only(phi)
-    eB_pub = sum((thBo[m] * zs(m, pm[m]) for m in thBo if m != "rel"), np.zeros(T))
-    eH_pub = sum((thHo[m] * zs(m, pm[m]) for m in thHo if m != "rel"), np.zeros(T))
-    tB_rel, tH_rel = thBo.get("rel", 0.0), thHo.get("rel", 0.0)
+    eB_pub = sum((thBo[m] * zs(m, pm[m]) for m in thBo if m not in ("rel", "relB", "relH")), np.zeros(T))
+    eH_pub = sum((thHo[m] * zs(m, pm[m]) for m in thHo if m not in ("rel", "relB", "relH")), np.zeros(T))
     psi = spec.unpack_push(phi)
-    p_pub = sum((psi[m] * zs(m, pm[m]) for m in psi if m != "rel"), np.zeros(T))
-    p_rel = psi.get("rel", 0.0)
-    use_rel = ("rel" in thR) or ("rel" in thG) or ("rel" in thBo) or ("rel" in thHo) or ("rel" in psi) or out == "rel"
+    PERS = ("rel", "relB", "relH")                          # 每人不同、在线计算的调节变量
+    p_pub = sum((psi[m] * zs(m, pm[m]) for m in psi if m not in PERS), np.zeros(T))
+    # 个人变量的系数：(θR, θG, θB_only, θH_only, ψ)
+    pers = {m: (thR.get(m, 0.0), thG.get(m, 0.0), thBo.get(m, 0.0), thHo.get(m, 0.0), psi.get(m, 0.0))
+            for m in PERS if any(m in d for d in (thR, thG, thBo, thHo, psi))}
+    use_rel = bool(pers) or out == "rel"
     rows = X.shape[0]
     rho, beta, kap, b = expit(X[:, 0]), X[:, 1], X[:, 2], X[:, 3]
     BL = np.full(rows, 1 / 3); BH = np.full(rows, 1 / 3); H = np.full(rows, 0.5); c = np.zeros(rows)
     relB = np.full(rows, 0.5); relH = np.full(rows, 0.5); a_prev = None
-    nll = np.zeros(rows); Z = np.zeros((rows, T)) if out in ("z", "rel", "w") else None
+    sB = np.full(rows, 0.5); sH = np.full(rows, 0.5)             # 信念建议成绩、习惯建议成绩（指数加权）
+    nll = np.zeros(rows); Z = np.zeros((rows, T)) if out in ("z", "rel", "w", "relB", "relH") else None
     Rr = np.zeros((rows, T)) if out == "w" else None; Gg = np.zeros((rows, T)) if out == "w" else None
     for t in range(T if rng is not None else win[1]):
         r, g, eB, eH, ps = r_pub[t], g_pub[t], eB_pub[t], eH_pub[t], p_pub[t]
-        if use_rel:
-            mrel = zs("rel", relB - relH)
-            r = r + tR_rel * mrel; g = g + tG_rel * mrel; eB = eB + tB_rel * mrel; eH = eH + tH_rel * mrel; ps = ps + p_rel * mrel
-        z = b + lam * lag[t] + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + ps * c
+        if pers:
+            cur = dict(rel=relB - relH, relB=sB, relH=sH)
+            for m, (cR, cG, cB, cH, cP) in pers.items():
+                mz = zs(m, cur[m])
+                r = r + cR * mz; g = g + cG * mz; eB = eB + cB * mz; eH = eH + cH * mz; ps = ps + cP * mz
+        V = BL - 0.7 * BH
+        z = b + lam * lag[t] + np.exp(g) * (beta * V * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + ps * c
+        recB = (beta * V > 0).astype(float); recH = (c > 0).astype(float)   # 两个系统此刻的建议（用于更新建议成绩）
         if rng is not None:
             zz = z + (sigma * eps[t] if eps is not None else 0.0)
             A[:, t] = rng.random(rows) < expit(zz)
@@ -178,12 +192,16 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
             Z[:, t] = z
         elif out == "rel":
             Z[:, t] = relB - relH
+        elif out in ("relB", "relH"):
+            Z[:, t] = sB if out == "relB" else sH
         elif out == "w":
             Rr[:, t] = r; Gg[:, t] = g
         if t >= win[0] and out == "nll":
             nll += np.logaddexp(0, z) - a * z
         # —— 看到本轮结果之后的更新 ——
         relB = (1 - REL_RATE) * relB + REL_RATE * (1 - (np.abs(G[:, t] - BL) + np.abs(S[:, t] - BH)) / 2)
+        sB = (1 - REL_RATE) * sB + REL_RATE * (recB * G[:, t] + (1 - recB) * S[:, t])
+        sH = (1 - REL_RATE) * sH + REL_RATE * (recH * G[:, t] + (1 - recH) * S[:, t])
         if a_prev is not None:
             relH = (1 - REL_RATE) * relH + REL_RATE * (a_prev * G[:, t] + (1 - a_prev) * S[:, t])
         a_prev = a.copy()

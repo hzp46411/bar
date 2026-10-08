@@ -33,6 +33,11 @@ MODELS["HRG_dev仅信念"] = L.Spec(ratio=_nodev, gain=_nodev, habit=True, bonly
 MODELS["HRGP"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"])
 MODELS["HRGP-stab"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["dev"])
 MODELS["HRGP-dev"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab"])
+# 可靠性仲裁（各系统看自己的建议成绩，Lee et al., 2014 式）：在 HRGP 中把原可靠性定义换掉
+_norel = [x for x in L.MODS if x != "rel"]
+MODELS["HRGP-rel"] = L.Spec(ratio=_norel, gain=_norel, habit=True, push=["stab", "dev"])
+MODELS["HRGPR"] = L.Spec(ratio=_norel, gain=_norel, habit=True, push=["stab", "dev"], bonly=["relB"], honly=["relH"])
+MODELS["HRGPR4"] = L.Spec(ratio=_norel + ["relB", "relH"], gain=_norel + ["relB", "relH"], habit=True, push=["stab", "dev"])
 DIR = L.OUT / "拟合"
 
 
