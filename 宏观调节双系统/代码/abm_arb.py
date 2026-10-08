@@ -16,10 +16,18 @@ import arb_lib as L
 
 FIT = lambda n: json.loads((L.OUT / "拟合" / f"{n}.json").read_text(encoding="utf-8"))
 SPECS = {"M0": L.Spec(), "RG": L.Spec(ratio=L.MODS, gain=L.MODS), "HRG": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True),
-         "H0": L.Spec(habit=True), "HRGP": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"])}
+         "H0": L.Spec(habit=True), "HRGP": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"]),
+         "HRGPR": L.Spec(ratio=["stab", "dev", "time"], gain=["stab", "dev", "time"], habit=True, push=["stab", "dev"],
+                         bonly=["relB"], honly=["relH"])}
 # 中介分解（用 HRG 的估计，关掉某一条"宏观 → 微观"路径）：(拟合名, 改动)
 VARIANTS = {"M0": ("M0", {}), "RG": ("RG", {}), "H0": ("H0", {}), "HRG": ("HRG", {}), "HRGP": ("HRGP", {}),
             "HRGP_关重复推力": ("HRGP", {"no_push": True}),
+            # 新主模型 HRGPR 的中介分解（轮次是个人学习，始终保留）
+            "HRGPR": ("HRGPR", {}),
+            "HRGPR_关可靠性仲裁": ("HRGPR", {"no_rel": True}),
+            "HRGPR_关宏观调节": ("HRGPR", {"no_macro": True}),
+            "HRGPR_关习惯累积": ("HRGPR", {"no_accum": True}),
+            "HRGPR_三条都关": ("HRGPR", {"no_rel": True, "no_macro": True, "no_accum": True}),
             "HRG_关直接比例调节": ("HRG", {"no_ratio": True}),
             "HRG_关习惯累积": ("HRG", {"no_accum": True}),
             "HRG_两条都关": ("HRG", {"no_ratio": True, "no_accum": True})}
@@ -50,17 +58,24 @@ def abm_one(args):
     spec, fit = SPECS[fname], FIT(fname)
     X = np.array(fit["X"]); phi = np.array([fit["shared"][k] for k in spec.names()]); sig = fit["sigma"]
     lam, thR, thG, aH = spec.unpack(phi)
+    thBo, thHo = spec.unpack_only(phi)
     if mod.get("no_ratio"):
         thR = {m: 0.0 for m in thR}
+    if mod.get("no_rel"):
+        thBo = {m: 0.0 for m in thBo}; thHo = {m: 0.0 for m in thHo}
+    if mod.get("no_macro"):                                       # 关掉稳定、偏离对权重与推力的作用
+        thR = {m: (0.0 if m in ("stab", "dev") else v) for m, v in thR.items()}
+        thG = {m: (0.0 if m in ("stab", "dev") else v) for m, v in thG.items()}
     if mod.get("no_accum"):
         aH = 1.0
-    psi = {} if mod.get("no_push") else spec.unpack_push(phi)
+    psi = {} if (mod.get("no_push") or mod.get("no_macro")) else spec.unpack_push(phi)
     zs = lambda m, v: (v - STD[m][0]) / STD[m][1]
     rng = np.random.default_rng(seed)
     n = X.shape[0]
     rho, beta, kap, b = expit(X[:, 0]), X[:, 1], X[:, 2], X[:, 3]
     BL = np.full(n, 1 / 3); BH = np.full(n, 1 / 3); H = np.full(n, .5); c = np.zeros(n)
     relB = np.full(n, .5); relH = np.full(n, .5); a_prev = None
+    sB = np.full(n, .5); sH = np.full(n, .5)                     # 两个系统的建议成绩（可靠性仲裁）
     A = np.zeros((n, L.T)); N = np.zeros(L.T); stab = 0.0; rbar = np.zeros(L.T)
     for t in range(L.T):
         lag = (N[t - 1] - L.CAP) / 10 if t > 0 else 0.0
@@ -71,12 +86,19 @@ def abm_one(args):
         r = sum((thR[m] * (mrel if m == "rel" else zs(m, mods[m])) for m in thR), np.zeros(n))
         g = sum((thG[m] * (mrel if m == "rel" else zs(m, mods[m])) for m in thG), np.zeros(n))
         push = sum((psi[m] * zs(m, mods[m]) for m in psi), 0.0)
-        z = b + lam * lag + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2) + kap * c * np.exp(-r / 2)) + push * c + sig * rng.standard_normal()
+        pers = dict(relB=zs("relB", sB) if "relB" in STD else 0.0, relH=zs("relH", sH) if "relH" in STD else 0.0)
+        eB = sum((thBo[m] * (pers[m] if m in pers else zs(m, mods[m])) for m in thBo), np.zeros(n))
+        eH = sum((thHo[m] * (pers[m] if m in pers else zs(m, mods[m])) for m in thHo), np.zeros(n))
+        V = BL - 0.7 * BH
+        z = b + lam * lag + np.exp(g) * (beta * V * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + push * c + sig * rng.standard_normal()
+        recB = (beta * V > 0).astype(float); recH = (c > 0).astype(float)
         a = (rng.random(n) < expit(z)).astype(float)
         A[:, t] = a; N[t] = a.sum(); rbar[t] = float(np.mean(r))
         oth = N[t] - a
         Gt = (oth <= L.CAP - 1).astype(float); St = (oth >= L.CAP + 1).astype(float)
         relB = (1 - L.REL_RATE) * relB + L.REL_RATE * (1 - (np.abs(Gt - BL) + np.abs(St - BH)) / 2)
+        sB = (1 - L.REL_RATE) * sB + L.REL_RATE * (recB * Gt + (1 - recB) * St)
+        sH = (1 - L.REL_RATE) * sH + L.REL_RATE * (recH * Gt + (1 - recH) * St)
         if a_prev is not None:
             relH = (1 - L.REL_RATE) * relH + L.REL_RATE * (a_prev * Gt + (1 - a_prev) * St)
         a_prev = a
@@ -98,7 +120,9 @@ def p2(sim, ob):
 
 
 if __name__ == "__main__":
-    names = [n for n, (fn, _) in VARIANTS.items() if (L.OUT / "拟合" / f"{fn}.json").exists()]
+    want = [a for a in sys.argv[1:] if not a.endswith(".json")]
+    outname = next((a for a in sys.argv[1:] if a.endswith(".json")), "闭环.json")
+    names = [n for n, (fn, _) in VARIANTS.items() if (L.OUT / "拟合" / f"{fn}.json").exists() and (not want or n in want)]
     with Pool(4) as pool:
         res = pool.map(abm_one, [(n, 300000 + 7919 * i + 101 * k) for k, n in enumerate(names) for i in range(B)])
     obs = fingerprint(L.ATT, L.A_REAL)
@@ -113,7 +137,8 @@ if __name__ == "__main__":
         Fs = d2 * B / (B + 1) * (B - k) / (k * (B - 1))
         out["人群"][n] = dict(联合p=float(F_dist.sf(Fs, k, B - k)),
                              **{key: dict(均值=float(np.nanmean(arr[key])), p=p2(arr[key], obs[key]) if key in obs else None) for key in arr})
-    L.save_json(out, L.OUT / "闭环.json")
+    L.save_json(out, L.OUT / outname)
     for n, v in out["人群"].items():
         print(n, "联合p=%.3f" % v["联合p"], {k: round(v[k]["均值"], 3) for k in ("sd", "acf1", "acf4", "sq_acf1", "D", "switch", "rbar_sd")})
-    (L.CKPT / "abm_arb.done").write_text("ok")
+    if outname == "闭环.json":
+        (L.CKPT / "abm_arb.done").write_text("ok")
