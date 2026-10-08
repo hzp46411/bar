@@ -25,6 +25,10 @@ MODELS["H0"] = L.Spec(habit=True)
 MODELS["HRG"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True)
 for m in L.MODS:                                         # 习惯痕迹主模型的逐项检验（HRG 收敛后加入）
     MODELS[f"HRG-{m}"] = L.Spec(ratio=[x for x in L.MODS if x != m], gain=L.MODS, habit=True)
+# 偏离对两个系统分开检验：偏离只作用于惯性（信念不随偏离变）/ 只作用于信念（惯性不随偏离变）
+_nodev = [x for x in L.MODS if x != "dev"]
+MODELS["HRG_dev仅惯性"] = L.Spec(ratio=_nodev, gain=_nodev, habit=True, honly=["dev"])
+MODELS["HRG_dev仅信念"] = L.Spec(ratio=_nodev, gain=_nodev, habit=True, bonly=["dev"])
 DIR = L.OUT / "拟合"
 
 

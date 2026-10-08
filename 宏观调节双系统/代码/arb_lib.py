@@ -78,28 +78,41 @@ def base_lambda():
 class Spec:
     """ratio / gain：哪些调节变量进入 r、g；habit：是否用习惯痕迹。共用参数向量 = [λ, θR..., θG..., (logit α_H)]。"""
 
-    def __init__(self, ratio=(), gain=(), habit=False):
+    def __init__(self, ratio=(), gain=(), habit=False, bonly=(), honly=()):
+        # bonly / honly：只作用于信念权重 / 只作用于惯性权重的调节变量（用于把"比例 + 增益"拆成两个系统各自的检验）
         self.ratio, self.gain, self.habit = list(ratio), list(gain), bool(habit)
+        self.bonly, self.honly = list(bonly), list(honly)
 
     @property
     def k(self):
-        return 1 + len(self.ratio) + len(self.gain) + int(self.habit)
+        return 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + int(self.habit)
 
     def unpack(self, phi):
         i = 1
         thR = dict(zip(self.ratio, phi[i:i + len(self.ratio)])); i += len(self.ratio)
         thG = dict(zip(self.gain, phi[i:i + len(self.gain)])); i += len(self.gain)
+        i += len(self.bonly) + len(self.honly)
         aH = expit(phi[i]) if self.habit else 1.0
         return phi[0], thR, thG, aH
 
+    def unpack_only(self, phi):
+        i = 1 + len(self.ratio) + len(self.gain)
+        thBo = dict(zip(self.bonly, phi[i:i + len(self.bonly)])); i += len(self.bonly)
+        thHo = dict(zip(self.honly, phi[i:i + len(self.honly)]))
+        return thBo, thHo
+
     def bounds(self):
-        return [(-3, 3)] + [(-3, 3)] * (len(self.ratio) + len(self.gain)) + ([(-7, 7)] if self.habit else [])
+        return [(-3, 3)] + [(-3, 3)] * (len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly)) + ([(-7, 7)] if self.habit else [])
 
     def names(self):
-        return ["lam"] + [f"θR_{m}" for m in self.ratio] + [f"θG_{m}" for m in self.gain] + (["logit_aH"] if self.habit else [])
+        return (["lam"] + [f"θR_{m}" for m in self.ratio] + [f"θG_{m}" for m in self.gain] + [f"θB_{m}" for m in self.bonly]
+                + [f"θH_{m}" for m in self.honly] + (["logit_aH"] if self.habit else []))
 
     def to_dict(self):
-        return dict(ratio=self.ratio, gain=self.gain, habit=self.habit)
+        d = dict(ratio=self.ratio, gain=self.gain, habit=self.habit)
+        if self.bonly or self.honly:
+            d.update(bonly=self.bonly, honly=self.honly)
+        return d
 
 
 def load_std():
@@ -130,7 +143,11 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
     r_pub = sum((thR[m] * zs(m, pm[m]) for m in thR if m != "rel"), np.zeros(T))
     g_pub = sum((thG[m] * zs(m, pm[m]) for m in thG if m != "rel"), np.zeros(T))
     tR_rel, tG_rel = thR.get("rel", 0.0), thG.get("rel", 0.0)
-    use_rel = ("rel" in thR) or ("rel" in thG) or out == "rel"
+    thBo, thHo = spec.unpack_only(phi)
+    eB_pub = sum((thBo[m] * zs(m, pm[m]) for m in thBo if m != "rel"), np.zeros(T))
+    eH_pub = sum((thHo[m] * zs(m, pm[m]) for m in thHo if m != "rel"), np.zeros(T))
+    tB_rel, tH_rel = thBo.get("rel", 0.0), thHo.get("rel", 0.0)
+    use_rel = ("rel" in thR) or ("rel" in thG) or ("rel" in thBo) or ("rel" in thHo) or out == "rel"
     rows = X.shape[0]
     rho, beta, kap, b = expit(X[:, 0]), X[:, 1], X[:, 2], X[:, 3]
     BL = np.full(rows, 1 / 3); BH = np.full(rows, 1 / 3); H = np.full(rows, 0.5); c = np.zeros(rows)
@@ -138,11 +155,11 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
     nll = np.zeros(rows); Z = np.zeros((rows, T)) if out in ("z", "rel", "w") else None
     Rr = np.zeros((rows, T)) if out == "w" else None; Gg = np.zeros((rows, T)) if out == "w" else None
     for t in range(T if rng is not None else win[1]):
-        r, g = r_pub[t], g_pub[t]
+        r, g, eB, eH = r_pub[t], g_pub[t], eB_pub[t], eH_pub[t]
         if use_rel:
             mrel = zs("rel", relB - relH)
-            r = r + tR_rel * mrel; g = g + tG_rel * mrel
-        z = b + lam * lag[t] + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2) + kap * c * np.exp(-r / 2))
+            r = r + tR_rel * mrel; g = g + tG_rel * mrel; eB = eB + tB_rel * mrel; eH = eH + tH_rel * mrel
+        z = b + lam * lag[t] + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH))
         if rng is not None:
             zz = z + (sigma * eps[t] if eps is not None else 0.0)
             A[:, t] = rng.random(rows) < expit(zz)
