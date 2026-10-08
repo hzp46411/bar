@@ -61,6 +61,14 @@ env.update({
     "subject_mae_mean": float(sig.mae_to_actual.mean()),
     "mae_constant60": float(np.abs(A - CAPACITY).mean()),
 })
+# 时间对齐核对：y_t 若在 A_t 揭晓之前报告，应与 A_t 负相关（预测高 → 多数人不去 → A_t 低）
+r_now = []
+for i in range(d.Y.shape[0]):
+    v = d.valid[i]
+    r_now.append(np.corrcoef(d.Y[i][v], A[v])[0, 1])
+r_now = np.array(r_now)
+env.update({"align_corr_y_t_A_t_mean": float(r_now.mean()),
+            "align_corr_t": float(r_now.mean() / (r_now.std(ddof=1) / np.sqrt(len(r_now))))})
 with open(os.path.join(RES_DIR, "描述统计.json"), "w", encoding="utf-8") as f:
     json.dump(env, f, ensure_ascii=False, indent=2)
 for k, v in env.items():

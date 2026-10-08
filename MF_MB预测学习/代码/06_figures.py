@@ -130,8 +130,10 @@ save(fig, "图4_后验预测.png")
 rec_path = os.path.join(RES_DIR, "恢复检验_模拟拟合.csv")
 if os.path.exists(rec_path):
     R = pd.read_csv(rec_path)
+    REGIME_TAGS = [(r, t) for r, t in (("empirical", "经验参数_全部被试"), ("uniform", "均匀抽样参数"),
+                                       ("group", "经验参数_对应类型被试")) if r in set(R.regime)]
     prec = pd.read_csv(os.path.join(RES_DIR, "参数恢复.csv"))
-    for regime, tag in (("empirical", "经验参数"), ("uniform", "均匀抽样参数")):
+    for regime, tag in REGIME_TAGS:
         panels = [(m, p) for m in MODEL_NAMES for p in MODELS[m].params]
         fig, ax = plt.subplots(3, 4, figsize=(14, 10))
         ax = ax.ravel()
@@ -152,8 +154,8 @@ if os.path.exists(rec_path):
         save(fig, f"图5_参数恢复_{tag}.png")
 
     mr = pd.read_csv(os.path.join(RES_DIR, "模型恢复_混淆矩阵.csv"))
-    fig, ax = plt.subplots(1, 2, figsize=(12, 4.8))
-    for a, (regime, tag) in zip(ax, (("empirical", "经验参数"), ("uniform", "均匀抽样参数"))):
+    fig, ax = plt.subplots(1, 3, figsize=(18, 4.8))
+    for a, (regime, tag) in zip(ax, REGIME_TAGS):
         cm = (mr[(mr.regime == regime) & (mr.criterion == "BIC")]
               .pivot(index="gen_model", columns="best_model", values="p_best_given_gen")
               .reindex(index=MODEL_NAMES, columns=MODEL_NAMES))
