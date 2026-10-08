@@ -78,21 +78,22 @@ def base_lambda():
 class Spec:
     """ratio / gain：哪些调节变量进入 r、g；habit：是否用习惯痕迹。共用参数向量 = [λ, θR..., θG..., (logit α_H)]。"""
 
-    def __init__(self, ratio=(), gain=(), habit=False, bonly=(), honly=(), push=()):
+    def __init__(self, ratio=(), gain=(), habit=False, bonly=(), honly=(), push=(), spline=False):
         # bonly / honly：只作用于信念权重 / 只作用于惯性权重的调节变量（用于把"比例 + 增益"拆成两个系统各自的检验）
         # push：加法"重复推力" ψ·c·M —— 不论 κ 正负，人人都被推向自己习惯的方向（乘法写法在重复型与交替型之间会相互抵消）
         self.ratio, self.gain, self.habit = list(ratio), list(gain), bool(habit)
         self.bonly, self.honly, self.push = list(bonly), list(honly), list(push)
+        self.spline = bool(spline)          # 分级反应改为分段样条：λ·d + 4 个拐点项（偏离 ±5、±10 人）
 
     @property
     def k(self):
-        return 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push) + int(self.habit)
+        return 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push) + 4 * int(self.spline) + int(self.habit)
 
     def unpack(self, phi):
         i = 1
         thR = dict(zip(self.ratio, phi[i:i + len(self.ratio)])); i += len(self.ratio)
         thG = dict(zip(self.gain, phi[i:i + len(self.gain)])); i += len(self.gain)
-        i += len(self.bonly) + len(self.honly) + len(self.push)
+        i += len(self.bonly) + len(self.honly) + len(self.push) + 4 * int(self.spline)
         aH = expit(phi[i]) if self.habit else 1.0
         return phi[0], thR, thG, aH
 
@@ -102,16 +103,24 @@ class Spec:
         thHo = dict(zip(self.honly, phi[i:i + len(self.honly)]))
         return thBo, thHo
 
+    def unpack_spline(self, phi):
+        if not self.spline:
+            return np.zeros(4)
+        i = 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push)
+        return np.asarray(phi[i:i + 4], float)
+
     def unpack_push(self, phi):
         i = 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly)
         return dict(zip(self.push, phi[i:i + len(self.push)]))
 
     def bounds(self):
-        return [(-3, 3)] + [(-3, 3)] * (len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push)) + ([(-7, 7)] if self.habit else [])
+        return ([(-3, 3)] + [(-3, 3)] * (len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push))
+                + [(-3, 3)] * (4 * int(self.spline)) + ([(-7, 7)] if self.habit else []))
 
     def names(self):
         return (["lam"] + [f"θR_{m}" for m in self.ratio] + [f"θG_{m}" for m in self.gain] + [f"θB_{m}" for m in self.bonly]
-                + [f"θH_{m}" for m in self.honly] + [f"ψ_{m}" for m in self.push] + (["logit_aH"] if self.habit else []))
+                + [f"θH_{m}" for m in self.honly] + [f"ψ_{m}" for m in self.push]
+                + (["λ_+5", "λ_+10", "λ_-5", "λ_-10"] if self.spline else []) + (["logit_aH"] if self.habit else []))
 
     def to_dict(self):
         d = dict(ratio=self.ratio, gain=self.gain, habit=self.habit)
@@ -119,6 +128,8 @@ class Spec:
             d.update(bonly=self.bonly, honly=self.honly)
         if self.push:
             d.update(push=self.push)
+        if self.spline:
+            d.update(spline=True)
         return d
 
 
@@ -154,6 +165,12 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
     std = std or load_std()
     lam, thR, thG, aH = spec.unpack(phi)
     pm, lag = public_mods(N)
+    kn = spec.unpack_spline(phi)
+    if spec.spline:                         # 拐点项：(d−5)+、(d−10)+、(−d−5)+、(−d−10)+，单位 10 人
+        dd = lag * 10
+        lag_extra = (kn[0] * np.maximum(dd - 5, 0) + kn[1] * np.maximum(dd - 10, 0) + kn[2] * np.maximum(-dd - 5, 0) + kn[3] * np.maximum(-dd - 10, 0)) / 10
+    else:
+        lag_extra = np.zeros(T)
     zs = lambda m, v: (v - std[m][0]) / std[m][1]
     r_pub = sum((thR[m] * zs(m, pm[m]) for m in thR if m not in ("rel", "relB", "relH")), np.zeros(T))
     g_pub = sum((thG[m] * zs(m, pm[m]) for m in thG if m not in ("rel", "relB", "relH")), np.zeros(T))
@@ -182,7 +199,7 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
                 mz = zs(m, cur[m])
                 r = r + cR * mz; g = g + cG * mz; eB = eB + cB * mz; eH = eH + cH * mz; ps = ps + cP * mz
         V = BL - 0.7 * BH
-        z = b + lam * lag[t] + np.exp(g) * (beta * V * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + ps * c
+        z = b + lam * lag[t] + lag_extra[t] + np.exp(g) * (beta * V * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + ps * c
         recB = (beta * V > 0).astype(float); recH = (c > 0).astype(float)   # 两个系统此刻的建议（用于更新建议成绩）
         if rng is not None:
             zz = z + (sigma * eps[t] if eps is not None else 0.0)

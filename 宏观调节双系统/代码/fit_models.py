@@ -38,6 +38,8 @@ _norel = [x for x in L.MODS if x != "rel"]
 MODELS["HRGP-rel"] = L.Spec(ratio=_norel, gain=_norel, habit=True, push=["stab", "dev"])
 MODELS["HRGPR"] = L.Spec(ratio=_norel, gain=_norel, habit=True, push=["stab", "dev"], bonly=["relB"], honly=["relH"])
 MODELS["HRGPR4"] = L.Spec(ratio=_norel + ["relB", "relH"], gain=_norel + ["relB", "relH"], habit=True, push=["stab", "dev"])
+# 饱和分级反应（样条）：闭环第 ③ 环发现它决定 φ0、φn 与波动聚集
+MODELS["HRGPRS"] = L.Spec(ratio=_norel, gain=_norel, habit=True, push=["stab", "dev"], bonly=["relB"], honly=["relH"], spline=True)
 DIR = L.OUT / "拟合"
 
 

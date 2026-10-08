@@ -85,12 +85,21 @@ def abm_one(args):
         mrel = zs("rel", relB - relH)
         r = sum((thR[m] * (mrel if m == "rel" else zs(m, mods[m])) for m in thR), np.zeros(n))
         g = sum((thG[m] * (mrel if m == "rel" else zs(m, mods[m])) for m in thG), np.zeros(n))
-        push = sum((psi[m] * zs(m, mods[m]) for m in psi), 0.0)
+        psi_i = mod.get("psi_stab_i")                             # 可选：每人一个稳定推力（替代共用 ψ_stab）
+        push = sum((psi[m] * zs(m, mods[m]) for m in psi if not (m == "stab" and psi_i is not None)), 0.0)
+        if psi_i is not None:
+            push = push + psi_i * zs("stab", mods["stab"])
         pers = dict(relB=zs("relB", sB) if "relB" in STD else 0.0, relH=zs("relH", sH) if "relH" in STD else 0.0)
         eB = sum((thBo[m] * (pers[m] if m in pers else zs(m, mods[m])) for m in thBo), np.zeros(n))
         eH = sum((thHo[m] * (pers[m] if m in pers else zs(m, mods[m])) for m in thHo), np.zeros(n))
         V = BL - 0.7 * BH
-        z = b + lam * lag + np.exp(g) * (beta * V * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + push * c + sig * rng.standard_normal()
+        lamc = mod.get("lam_coef")                                # 可选：分段样条的分级反应（替代线性 λ·LAG）
+        if lamc is not None:
+            dd = lag * 10
+            lamterm = float(np.dot(lamc, [dd / 10, max(dd - 5, 0) / 10, max(dd - 10, 0) / 10, max(-dd - 5, 0) / 10, max(-dd - 10, 0) / 10]))
+        else:
+            lamterm = lam * lag
+        z = b + lamterm + np.exp(g) * (beta * V * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + push * c + sig * rng.standard_normal()
         recB = (beta * V > 0).astype(float); recH = (c > 0).astype(float)
         a = (rng.random(n) < expit(z)).astype(float)
         A[:, t] = a; N[t] = a.sum(); rbar[t] = float(np.mean(r))

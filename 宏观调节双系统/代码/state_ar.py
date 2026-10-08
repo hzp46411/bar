@@ -17,13 +17,14 @@ def coefs(N):
     Xm = np.column_stack([np.ones(L.T), d, d * st, d * np.abs(d) / 10])[sl]
     b, *_ = np.linalg.lstsq(Xm, y[sl], rcond=None)
     return b[1:]
-Ab.fingerprint = lambda N, A: {"N": N.copy()}
-out = {"真实": dict(zip(["φ0", "φs_稳定", "φn_非线性"], np.round(coefs(L.ATT), 4).tolist()))}
-for name in ("HRGPR", "HRGPR_关宏观调节", "HRGPR_三条都关", "M0"):
-    C = np.array([coefs(Ab.abm_one((name, 900000 + k))[1]["N"]) for k in range(300)])
-    real = coefs(L.ATT)
-    out[name] = {lab: dict(均值=round(float(C[:, j].mean()), 4), 区间95=[round(float(np.percentile(C[:, j], q)), 4) for q in (2.5, 97.5)],
-                           真实值的分位=round(float(np.mean(C[:, j] <= real[j])), 3)) for j, lab in enumerate(["φ0", "φs_稳定", "φn_非线性"])}
-    print(name, out[name], flush=True)
-print("真实", out["真实"])
-L.save_json(out, L.OUT / "宏观状态依赖反馈.json")
+if __name__ == "__main__":
+    Ab.fingerprint = lambda N, A: {"N": N.copy()}
+    out = {"真实": dict(zip(["φ0", "φs_稳定", "φn_非线性"], np.round(coefs(L.ATT), 4).tolist()))}
+    for name in ("HRGPR", "HRGPR_关宏观调节", "HRGPR_三条都关", "M0"):
+        C = np.array([coefs(Ab.abm_one((name, 900000 + k))[1]["N"]) for k in range(300)])
+        real = coefs(L.ATT)
+        out[name] = {lab: dict(均值=round(float(C[:, j].mean()), 4), 区间95=[round(float(np.percentile(C[:, j], q)), 4) for q in (2.5, 97.5)],
+                               真实值的分位=round(float(np.mean(C[:, j] <= real[j])), 3)) for j, lab in enumerate(["φ0", "φs_稳定", "φn_非线性"])}
+        print(name, out[name], flush=True)
+    print("真实", out["真实"])
+    L.save_json(out, L.OUT / "宏观状态依赖反馈.json")
