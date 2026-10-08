@@ -78,20 +78,21 @@ def base_lambda():
 class Spec:
     """ratio / gain：哪些调节变量进入 r、g；habit：是否用习惯痕迹。共用参数向量 = [λ, θR..., θG..., (logit α_H)]。"""
 
-    def __init__(self, ratio=(), gain=(), habit=False, bonly=(), honly=()):
+    def __init__(self, ratio=(), gain=(), habit=False, bonly=(), honly=(), push=()):
         # bonly / honly：只作用于信念权重 / 只作用于惯性权重的调节变量（用于把"比例 + 增益"拆成两个系统各自的检验）
+        # push：加法"重复推力" ψ·c·M —— 不论 κ 正负，人人都被推向自己习惯的方向（乘法写法在重复型与交替型之间会相互抵消）
         self.ratio, self.gain, self.habit = list(ratio), list(gain), bool(habit)
-        self.bonly, self.honly = list(bonly), list(honly)
+        self.bonly, self.honly, self.push = list(bonly), list(honly), list(push)
 
     @property
     def k(self):
-        return 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + int(self.habit)
+        return 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push) + int(self.habit)
 
     def unpack(self, phi):
         i = 1
         thR = dict(zip(self.ratio, phi[i:i + len(self.ratio)])); i += len(self.ratio)
         thG = dict(zip(self.gain, phi[i:i + len(self.gain)])); i += len(self.gain)
-        i += len(self.bonly) + len(self.honly)
+        i += len(self.bonly) + len(self.honly) + len(self.push)
         aH = expit(phi[i]) if self.habit else 1.0
         return phi[0], thR, thG, aH
 
@@ -101,17 +102,23 @@ class Spec:
         thHo = dict(zip(self.honly, phi[i:i + len(self.honly)]))
         return thBo, thHo
 
+    def unpack_push(self, phi):
+        i = 1 + len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly)
+        return dict(zip(self.push, phi[i:i + len(self.push)]))
+
     def bounds(self):
-        return [(-3, 3)] + [(-3, 3)] * (len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly)) + ([(-7, 7)] if self.habit else [])
+        return [(-3, 3)] + [(-3, 3)] * (len(self.ratio) + len(self.gain) + len(self.bonly) + len(self.honly) + len(self.push)) + ([(-7, 7)] if self.habit else [])
 
     def names(self):
         return (["lam"] + [f"θR_{m}" for m in self.ratio] + [f"θG_{m}" for m in self.gain] + [f"θB_{m}" for m in self.bonly]
-                + [f"θH_{m}" for m in self.honly] + (["logit_aH"] if self.habit else []))
+                + [f"θH_{m}" for m in self.honly] + [f"ψ_{m}" for m in self.push] + (["logit_aH"] if self.habit else []))
 
     def to_dict(self):
         d = dict(ratio=self.ratio, gain=self.gain, habit=self.habit)
         if self.bonly or self.honly:
             d.update(bonly=self.bonly, honly=self.honly)
+        if self.push:
+            d.update(push=self.push)
         return d
 
 
@@ -147,7 +154,10 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
     eB_pub = sum((thBo[m] * zs(m, pm[m]) for m in thBo if m != "rel"), np.zeros(T))
     eH_pub = sum((thHo[m] * zs(m, pm[m]) for m in thHo if m != "rel"), np.zeros(T))
     tB_rel, tH_rel = thBo.get("rel", 0.0), thHo.get("rel", 0.0)
-    use_rel = ("rel" in thR) or ("rel" in thG) or ("rel" in thBo) or ("rel" in thHo) or out == "rel"
+    psi = spec.unpack_push(phi)
+    p_pub = sum((psi[m] * zs(m, pm[m]) for m in psi if m != "rel"), np.zeros(T))
+    p_rel = psi.get("rel", 0.0)
+    use_rel = ("rel" in thR) or ("rel" in thG) or ("rel" in thBo) or ("rel" in thHo) or ("rel" in psi) or out == "rel"
     rows = X.shape[0]
     rho, beta, kap, b = expit(X[:, 0]), X[:, 1], X[:, 2], X[:, 3]
     BL = np.full(rows, 1 / 3); BH = np.full(rows, 1 / 3); H = np.full(rows, 0.5); c = np.zeros(rows)
@@ -155,11 +165,11 @@ def run(X, spec, phi, A, G, S, N, out="nll", rng=None, std=None, win=(0, T), sig
     nll = np.zeros(rows); Z = np.zeros((rows, T)) if out in ("z", "rel", "w") else None
     Rr = np.zeros((rows, T)) if out == "w" else None; Gg = np.zeros((rows, T)) if out == "w" else None
     for t in range(T if rng is not None else win[1]):
-        r, g, eB, eH = r_pub[t], g_pub[t], eB_pub[t], eH_pub[t]
+        r, g, eB, eH, ps = r_pub[t], g_pub[t], eB_pub[t], eH_pub[t], p_pub[t]
         if use_rel:
             mrel = zs("rel", relB - relH)
-            r = r + tR_rel * mrel; g = g + tG_rel * mrel; eB = eB + tB_rel * mrel; eH = eH + tH_rel * mrel
-        z = b + lam * lag[t] + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH))
+            r = r + tR_rel * mrel; g = g + tG_rel * mrel; eB = eB + tB_rel * mrel; eH = eH + tH_rel * mrel; ps = ps + p_rel * mrel
+        z = b + lam * lag[t] + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2 + eB) + kap * c * np.exp(-r / 2 + eH)) + ps * c
         if rng is not None:
             zz = z + (sigma * eps[t] if eps is not None else 0.0)
             A[:, t] = rng.random(rows) < expit(zz)

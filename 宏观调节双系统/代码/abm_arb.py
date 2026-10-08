@@ -16,9 +16,10 @@ import arb_lib as L
 
 FIT = lambda n: json.loads((L.OUT / "拟合" / f"{n}.json").read_text(encoding="utf-8"))
 SPECS = {"M0": L.Spec(), "RG": L.Spec(ratio=L.MODS, gain=L.MODS), "HRG": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True),
-         "H0": L.Spec(habit=True)}
+         "H0": L.Spec(habit=True), "HRGP": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"])}
 # 中介分解（用 HRG 的估计，关掉某一条"宏观 → 微观"路径）：(拟合名, 改动)
-VARIANTS = {"M0": ("M0", {}), "RG": ("RG", {}), "H0": ("H0", {}), "HRG": ("HRG", {}),
+VARIANTS = {"M0": ("M0", {}), "RG": ("RG", {}), "H0": ("H0", {}), "HRG": ("HRG", {}), "HRGP": ("HRGP", {}),
+            "HRGP_关重复推力": ("HRGP", {"no_push": True}),
             "HRG_关直接比例调节": ("HRG", {"no_ratio": True}),
             "HRG_关习惯累积": ("HRG", {"no_accum": True}),
             "HRG_两条都关": ("HRG", {"no_ratio": True, "no_accum": True})}
@@ -53,6 +54,7 @@ def abm_one(args):
         thR = {m: 0.0 for m in thR}
     if mod.get("no_accum"):
         aH = 1.0
+    psi = {} if mod.get("no_push") else spec.unpack_push(phi)
     zs = lambda m, v: (v - STD[m][0]) / STD[m][1]
     rng = np.random.default_rng(seed)
     n = X.shape[0]
@@ -68,7 +70,8 @@ def abm_one(args):
         mrel = zs("rel", relB - relH)
         r = sum((thR[m] * (mrel if m == "rel" else zs(m, mods[m])) for m in thR), np.zeros(n))
         g = sum((thG[m] * (mrel if m == "rel" else zs(m, mods[m])) for m in thG), np.zeros(n))
-        z = b + lam * lag + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2) + kap * c * np.exp(-r / 2)) + sig * rng.standard_normal()
+        push = sum((psi[m] * zs(m, mods[m]) for m in psi), 0.0)
+        z = b + lam * lag + np.exp(g) * (beta * (BL - 0.7 * BH) * np.exp(r / 2) + kap * c * np.exp(-r / 2)) + push * c + sig * rng.standard_normal()
         a = (rng.random(n) < expit(z)).astype(float)
         A[:, t] = a; N[t] = a.sum(); rbar[t] = float(np.mean(r))
         oth = N[t] - a

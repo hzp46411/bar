@@ -29,6 +29,10 @@ for m in L.MODS:                                         # 习惯痕迹主模型
 _nodev = [x for x in L.MODS if x != "dev"]
 MODELS["HRG_dev仅惯性"] = L.Spec(ratio=_nodev, gain=_nodev, habit=True, honly=["dev"])
 MODELS["HRG_dev仅信念"] = L.Spec(ratio=_nodev, gain=_nodev, habit=True, bonly=["dev"])
+# 加法"重复推力"（稳定 / 偏离时人人被推向或推离自己的习惯方向），在 HRG 之上
+MODELS["HRGP"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"])
+MODELS["HRGP-stab"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["dev"])
+MODELS["HRGP-dev"] = L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab"])
 DIR = L.OUT / "拟合"
 
 

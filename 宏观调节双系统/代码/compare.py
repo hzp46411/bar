@@ -41,7 +41,7 @@ if __name__ == "__main__":
                           共用参数={k: round(v, 4) for k, v in f["shared"].items()}) for n, f in sorted(F.items())}}
     tests = []
     pairs = [("RG", "M0"), ("R", "M0"), ("G", "M0"), ("RG", "G"), ("RG", "R"), ("H0", "M0"), ("HRG", "H0")] + \
-            [("RG", f"RG-{m}") for m in L.MODS] + [("HRG", f"HRG-{m}") for m in L.MODS] + [("HRG", "RG"), ("HRG", "HRG_dev仅惯性"), ("HRG", "HRG_dev仅信念")]
+            [("RG", f"RG-{m}") for m in L.MODS] + [("HRG", f"HRG-{m}") for m in L.MODS] + [("HRG", "RG"), ("HRG", "HRG_dev仅惯性"), ("HRG", "HRG_dev仅信念"), ("HRGP", "HRG"), ("HRGP", "HRGP-stab"), ("HRGP", "HRGP-dev")]
     for big, small in pairs:
         if big in F and small in F:
             tests.append(lr(big, small))
