@@ -19,6 +19,8 @@ SPECS = {"M0": L.Spec(), "RG": L.Spec(ratio=L.MODS, gain=L.MODS), "HRG": L.Spec(
          "H0": L.Spec(habit=True), "HRGP": L.Spec(ratio=L.MODS, gain=L.MODS, habit=True, push=["stab", "dev"]),
          "HRGPR": L.Spec(ratio=["stab", "dev", "time"], gain=["stab", "dev", "time"], habit=True, push=["stab", "dev"],
                          bonly=["relB"], honly=["relH"])}
+SPECS["HRGPRS"] = L.Spec(ratio=["stab", "dev", "time"], gain=["stab", "dev", "time"], habit=True, push=["stab", "dev"],
+                         bonly=["relB"], honly=["relH"], spline=True)
 # 中介分解（用 HRG 的估计，关掉某一条"宏观 → 微观"路径）：(拟合名, 改动)
 VARIANTS = {"M0": ("M0", {}), "RG": ("RG", {}), "H0": ("H0", {}), "HRG": ("HRG", {}), "HRGP": ("HRGP", {}),
             "HRGP_关重复推力": ("HRGP", {"no_push": True}),
@@ -55,10 +57,32 @@ def fingerprint(N, A):
 def abm_one(args):
     name, seed = args
     fname, mod = VARIANTS[name]
+    N, A, extra = simulate(fname, mod, seed)
+    fp = fingerprint(N, A)
+    fp.update(extra)
+    return name, fp
+
+
+def simulate(fname, mod, seed):
+    """一次闭环模拟，返回 (人数序列 N, 选择矩阵 A, 附加量)。
+    mod 可选键：no_ratio / no_rel / no_macro / no_accum / no_push（关掉某条通路）；
+      zero_mods=[...]：把这些调节变量对比例、增益、推力的作用全部置 0（= 固定在均值）；
+      phi_scale={参数名: 倍数}：把某个共用参数乘以倍数（剂量—反应）；psi_stab_i、lam_coef 见下。"""
     spec, fit = SPECS[fname], FIT(fname)
     X = np.array(fit["X"]); phi = np.array([fit["shared"][k] for k in spec.names()]); sig = fit["sigma"]
+    for k_, f_ in mod.get("phi_scale", {}).items():
+        phi[spec.names().index(k_)] *= f_
+    for k_, v_ in mod.get("phi_set", {}).items():                   # 直接设定某些共用参数（如只关掉某一通道）
+        phi[spec.names().index(k_)] = v_
     lam, thR, thG, aH = spec.unpack(phi)
     thBo, thHo = spec.unpack_only(phi)
+    if spec.spline and "lam_coef" not in mod:
+        mod = dict(mod, lam_coef=np.r_[lam, spec.unpack_spline(phi)])
+    for m_ in mod.get("zero_mods", []):
+        thR = {m: (0.0 if m == m_ else v) for m, v in thR.items()}
+        thG = {m: (0.0 if m == m_ else v) for m, v in thG.items()}
+        thBo = {m: (0.0 if m == m_ else v) for m, v in thBo.items()}
+        thHo = {m: (0.0 if m == m_ else v) for m, v in thHo.items()}
     if mod.get("no_ratio"):
         thR = {m: 0.0 for m in thR}
     if mod.get("no_rel"):
@@ -69,6 +93,7 @@ def abm_one(args):
     if mod.get("no_accum"):
         aH = 1.0
     psi = {} if (mod.get("no_push") or mod.get("no_macro")) else spec.unpack_push(phi)
+    psi = {m: v for m, v in psi.items() if m not in mod.get("zero_mods", [])}
     zs = lambda m, v: (v - STD[m][0]) / STD[m][1]
     rng = np.random.default_rng(seed)
     n = X.shape[0]
@@ -92,6 +117,10 @@ def abm_one(args):
         pers = dict(relB=zs("relB", sB) if "relB" in STD else 0.0, relH=zs("relH", sH) if "relH" in STD else 0.0)
         eB = sum((thBo[m] * (pers[m] if m in pers else zs(m, mods[m])) for m in thBo), np.zeros(n))
         eH = sum((thHo[m] * (pers[m] if m in pers else zs(m, mods[m])) for m in thHo), np.zeros(n))
+        stt = mod.get("stab_terms")                               # 可选：稳定的任意编码（按稳定 0–4 查表的信念、惯性、推力三条作用）
+        if stt is not None:
+            kk = int(min(stab, 4))
+            eB = eB + stt["eB"][kk]; eH = eH + stt["eH"][kk]; push = push + stt["psi"][kk]
         V = BL - 0.7 * BH
         lamc = mod.get("lam_coef")                                # 可选：分段样条的分级反应（替代线性 λ·LAG）
         if lamc is not None:
@@ -116,11 +145,10 @@ def abm_one(args):
             H += aH * (a - H); c = 2 * H - 1
         else:
             c = 2 * a - 1
-    fp = fingerprint(N, A)
-    fp["habit_strength"] = float(np.mean(np.abs(c)))                         # 最后一轮的平均习惯强度 |c|
-    fp["rbar_sd"] = float(rbar[2:].std())                                    # 群体平均比例随时间波动的幅度
-    fp["rbar_corr_crowdflip"] = float(np.corrcoef(rbar[3:], (N[2:-1] > L.CAP) != (N[1:-2] > L.CAP))[0, 1]) if spec.ratio and np.std(rbar[3:]) > 0 else 0.0
-    return name, fp
+    extra = dict(habit_strength=float(np.mean(np.abs(c))),                    # 最后一轮的平均习惯强度 |c|
+                 rbar_sd=float(rbar[2:].std()),                               # 群体平均比例随时间波动的幅度
+                 rbar_corr_crowdflip=float(np.corrcoef(rbar[3:], (N[2:-1] > L.CAP) != (N[1:-2] > L.CAP))[0, 1]) if spec.ratio and np.std(rbar[3:]) > 0 else 0.0)
+    return N, A, extra
 
 
 def p2(sim, ob):
