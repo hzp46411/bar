@@ -7,7 +7,8 @@
         另加同一轮所有人共享的冲击 ε_t ~ N(0, σ_c²)；之后用模拟的人数更新所有状态
   σ_c：开环（真实历史）下估计——人数残差 N_t − Σp_it 的方差超出二项方差 Σp(1−p) 的部分，换算到 logit 尺度
         Var_excess ≈ (Σ p(1−p))² σ_c²
-  A 拟合检验：完整模型闭环模拟 B 次，宏观指标与真实数据比较（真实值在模拟分布中的百分位）
+  A 拟合检验：完整模型闭环模拟 B 次，宏观指标与真实数据比较（真实值在模拟分布中的百分位）；
+     另报告不含共同冲击，以及 σ_c = .10 / .15 / .20 时的 SD 与 ACF（σ_c 由开环残差估计，可能混有未建模的动态）
   B 成分敲除（保持水平：修改后把每人在真实历史上的平均 logit 变化加回 b，使平均倾向不变，只改变动态）：
      去习惯（H 与 D）、去慢漂移、去近期信念、去状态预测（B）、去世界模型中的分级（κ）、去世界模型（B 与 L）、
      去选择端的滞后反应（λ1、λ2、λ4；以及只去 λ2、只去 λ4）、去全部公共信息、状态预测无方向（δ = 0）、
@@ -16,7 +17,8 @@
      对 完整、去近期信念、去状态预测、去选择端的滞后反应、去全部公共信息、去习惯 分别计算
   指标：平均人数、|平均 − 60|、SD、ACF1–4、挤的轮次比例、效率（每人每轮得分：去且不挤 1，不去且挤 0.7）、换选择率、
         个人去的比例的 SD、常客（去的比例 > .8）、几乎不去（< .2）
-用法：python3 s27_ABM.py <模型> [B]      模型 = HDLB（s25）、HLB / HW / HDW / HWL / HDWL（s26）、HB（s22）、HDB（s23）
+用法：python3 s27_ABM.py <模型> [B]      模型 = HDLB（s25）、HLB / HW / HDW / HWL / HDWL（s26）、HB（s22）、HDB（s23）、
+      s29 / s30 的模型名，或 s28:<模型>（s28 的最终拟合）
 输出：结果/s27_ABM_<模型>.json
 """
 import sys, json
@@ -40,7 +42,10 @@ FIXED = {"HDLB": (50.0, 0.0), "HDEB": (None, 0.0), "HB": (-50.0, 0.0), "HDB": (-
 
 
 def load(m):
-    """读取模型的个人参数，补成 17 列（与 s30 相同：b, wI, wF, aF, wB, η, δ, lnσ, aH, wD, aD, dE, W, λ1, κ, λ2, λ4）。"""
+    """读取模型的个人参数，补成 17 列（与 s30 相同：b, wI, wF, aF, wB, η, δ, lnσ, aH, wD, aD, dE, W, λ1, κ, λ2, λ4）。
+    名字以 "s28:" 开头时取 s28 的最终拟合（如 s28:HDWLG1）。"""
+    if m.startswith("s28:"):
+        SRC[m] = f"s28_真实_{m[4:]}.json"; FIXED[m] = (-50.0 if "F" in m[4:] else 50.0, 1.0)
     X = np.array(json.loads((PL.OUT / SRC[m]).read_text(encoding="utf-8"))["X"])
     Y = np.zeros((X.shape[0], 17)); Y[:, :X.shape[1]] = X
     dE, W = FIXED[m]
@@ -183,6 +188,9 @@ if __name__ == "__main__":
     print(json.dumps(out, ensure_ascii=False), flush=True)
     out["A 拟合检验"] = summarize(metrics(*simulate(X, B, 1, sig_c)), real)
     out["A 拟合检验（无共同冲击）"] = summarize(metrics(*simulate(X, B, 2, 0.0)), real)
+    out["A2 共同冲击的敏感性"] = {f"σ_c={sc:.2f}": {k: v for k, v in summarize(metrics(*simulate(X, B, 5, sc)), real).items()
+                                                  if k in ("SD", "ACF1", "ACF2", "ACF3", "ACF4", "平均人数")}
+                                for sc in (0.10, 0.15, 0.20)}
     print("A 完成", flush=True)
     out["B 成分敲除"] = {}
     for k, Y in knockouts(X, terms).items():
@@ -205,5 +213,5 @@ if __name__ == "__main__":
         gains[k] = dict(基线平均人数=round(float(base), 2), **row)
         print("  自稳", k, flush=True)
     out["C 扰动自稳"] = gains
-    PL.save(out, f"s27_ABM_{m}.json")
+    PL.save(out, f"s27_ABM_{m.replace(':', '_')}.json")
     print(json.dumps({k: out[k] for k in ("共同冲击σ_c", "A 拟合检验")}, ensure_ascii=False, indent=1))
