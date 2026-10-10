@@ -2,16 +2,18 @@
 """
 第 27 步：主模型的 ABM（闭环）——个体的内部模型怎样生成宏观协调
   agent：100 个，每人取主模型层级估计的后验众数（真实被试的参数）；人数 = 100 个 agent 的选择之和（闭环）
-  每轮：习惯痕迹 H、慢漂移 D、近期信念 L（EWA δ = 1，或 MF δ = 0）、世界模型（B：以上轮状态为条件的预期；或 W）进入 logit，
+  每轮：习惯痕迹 H、慢漂移 D、近期信念 L（EWA δ = 1，或 MF δ = 0）、世界模型（B：以上轮状态为条件的预期；或 W）、
+        对上轮人数大小的分级反应（λ·lag；或世界模型中的 κ·lag）进入 logit，
         另加同一轮所有人共享的冲击 ε_t ~ N(0, σ_c²)；之后用模拟的人数更新所有状态
   σ_c：开环（真实历史）下估计——人数残差 N_t − Σp_it 的方差超出二项方差 Σp(1−p) 的部分，换算到 logit 尺度
         Var_excess ≈ (Σ p(1−p))² σ_c²
   A 拟合检验：完整模型闭环模拟 B 次，宏观指标与真实数据比较（真实值在模拟分布中的百分位）
   B 成分敲除（保持水平：去掉某项后把它在真实历史上的个人均值加回 b，使每人的平均倾向不变，只改变动态）：
-     去习惯（H 与 D）、去慢漂移、去近期信念、去状态预测（B）、去世界模型（B 与 L）、状态预测无方向（δ = 0）、
+     去习惯（H 与 D）、去慢漂移、去近期信念、去状态预测（B）、去世界模型（B 与 L）、去分级反应（R）、
+     去全部公共信息（B、L、R）、状态预测无方向（δ = 0）、
      全体反转（δ = +|δ|）、全体外推（δ = −|δ|）、同质人群（各参数取中位数）、打乱人群（各参数列独立置换）、去共同冲击
   C 扰动自稳：所有人的 b 加同一个 Δb，平均人数的平移 / 无反馈时的平移（Σp(1−p)·Δb）；自稳增益 = 1 − 两者之比
-     对 完整、去近期信念、去状态预测、去世界模型、去习惯 分别计算
+     对 完整、去近期信念、去状态预测、去分级反应、去全部公共信息、去习惯 分别计算
   指标：平均人数、|平均 − 60|、SD、ACF1–4、挤的轮次比例、效率（每人每轮得分：去且不挤 1，不去且挤 0.7）、换选择率、
         个人去的比例的 SD、常客（去的比例 > .8）、几乎不去（< .2）
 用法：python3 s27_ABM.py <模型> [B]      模型 = HDLB（s25）、HLB / HW / HDW / HWL / HDWL（s26）、HB（s22）、HDB（s23）
@@ -29,15 +31,16 @@ N_FULL = PL._raw.iloc[0, 1:].astype(float).values
 CROWD0 = float(N_FULL[-T - 1] >= 61)                                    # 第 1 轮之前的状态
 SRC = {"HDLB": "s25_真实_HDLB.json", "HDEB": "s25_真实_HDEB.json", "HB": "s22_真实_HB.json", "HDB": "s23_真实_HDB.json",
        "HLB": "s26_真实_HLB.json", "HW": "s26_真实_HW.json", "HDW": "s26_真实_HDW.json", "HWL": "s26_真实_HWL.json",
-       "HDWL": "s26_真实_HDWL.json"}
+       "HDWL": "s26_真实_HDWL.json", **{m: f"s29_真实_{m}.json" for m in ("HDWR", "HDWG", "HDWLR", "HDWLG")}}
 FIXED = {"HDLB": (50.0, 0.0), "HDEB": (None, 0.0), "HB": (-50.0, 0.0), "HDB": (-50.0, 0.0),
-         "HLB": (50.0, 0.0), "HW": (-50.0, 1.0), "HDW": (-50.0, 1.0), "HWL": (50.0, 1.0), "HDWL": (50.0, 1.0)}   # (logit δ_EWA, 世界模型类型)
+         "HLB": (50.0, 0.0), "HW": (-50.0, 1.0), "HDW": (-50.0, 1.0), "HWL": (50.0, 1.0), "HDWL": (50.0, 1.0),
+         "HDWR": (-50.0, 1.0), "HDWG": (-50.0, 1.0), "HDWLR": (50.0, 1.0), "HDWLG": (50.0, 1.0)}   # (logit δ_EWA, 世界模型类型)
 
 
 def load(m):
-    """读取模型的个人参数，补成 13 列（与 s26 相同：b, wI, wF, aF, wB, η, δ, lnσ, aH, wD, aD, dE, W）。"""
+    """读取模型的个人参数，补成 15 列（与 s29 相同：b, wI, wF, aF, wB, η, δ, lnσ, aH, wD, aD, dE, W, λ, κ）。"""
     X = np.array(json.loads((PL.OUT / SRC[m]).read_text(encoding="utf-8"))["X"])
-    Y = np.zeros((X.shape[0], 13)); Y[:, :X.shape[1]] = X
+    Y = np.zeros((X.shape[0], 15)); Y[:, :X.shape[1]] = X
     dE, W = FIXED[m]
     if dE is not None:
         Y[:, 11] = dE
@@ -45,12 +48,12 @@ def load(m):
     return Y
 
 
-def step_terms(X, st, sp):
-    """当前状态下各项对 logit 的贡献。st：状态字典；sp：每行的上一轮状态（1 = 挤）。"""
-    wI, wF, wB, delta, sig, wD = X[:, 1], X[:, 2], X[:, 4], X[:, 6], np.exp(X[:, 7]), X[:, 9]
-    Mp = np.where(X[:, 12] > 0.5, st["mu"] + delta / 2 * (1 - 2 * sp), np.where(sp > 0.5, st["Mc"], st["Mn"]))
+def step_terms(X, st, sp, lag):
+    """当前状态下各项对 logit 的贡献。st：状态字典；sp：每行的上一轮状态（1 = 挤）；lag：上一轮人数偏离 / 10。"""
+    wI, wF, wB, delta, sig, wD, lam, kap = X[:, 1], X[:, 2], X[:, 4], X[:, 6], np.exp(X[:, 7]), X[:, 9], X[:, 13], X[:, 14]
+    Mp = np.where(X[:, 12] > 0.5, st["mu"] + delta / 2 * (1 - 2 * sp) + kap * lag, np.where(sp > 0.5, st["Mc"], st["Mn"]))
     p = ndtr((60.5 - Mp) / sig)
-    return dict(H=wI * st["H"], D=wD * st["D"], L=wF * (st["QG"] - st["QS"]), B=wB * (1.7 * p - 0.7)), Mp
+    return dict(H=wI * st["H"], D=wD * st["D"], L=wF * (st["QG"] - st["QS"]), B=wB * (1.7 * p - 0.7), R=lam * lag), Mp
 
 
 def init_state(X):
@@ -73,10 +76,11 @@ def update(X, st, a, Nt, sp, G, S):
 
 def open_loop(X):
     """真实历史下的各项贡献（n, T）与选择概率。"""
-    n = X.shape[0]; st = init_state(X); terms = {k: np.zeros((n, T)) for k in "HDLB"}; P = np.zeros((n, T))
+    n = X.shape[0]; st = init_state(X); terms = {k: np.zeros((n, T)) for k in "HDLBR"}; P = np.zeros((n, T))
     for t in range(T):
-        sp = np.full(n, CROWD0 if t == 0 else float(N_REAL[t - 1] >= 61))
-        tm, _ = step_terms(X, st, sp)
+        Nprev = N_FULL[-T - 1] if t == 0 else N_REAL[t - 1]
+        sp = np.full(n, float(Nprev >= 61)); lag = np.full(n, (Nprev - 60) / 10)
+        tm, _ = step_terms(X, st, sp, lag)
         for k in tm:
             terms[k][:, t] = tm[k]
         P[:, t] = expit(X[:, 0] + sum(tm.values()))
@@ -95,17 +99,17 @@ def simulate(X, R, seed, sig_c, db=0.0):
     """R 次闭环模拟（一起向量化）。返回 人数 (R, T) 与 选择 (R, n, T)（int8）。"""
     n = X.shape[0]; rng = np.random.default_rng(seed)
     Xr = np.tile(X, (R, 1)); Xr[:, 0] = Xr[:, 0] + db
-    st = init_state(Xr); sp_run = np.full(R, CROWD0)
+    st = init_state(Xr); N_run = np.full(R, float(N_FULL[-T - 1]))
     Ns = np.zeros((R, T)); A = np.zeros((R, n, T), dtype=np.int8)
     for t in range(T):
-        sp = np.repeat(sp_run, n)
-        tm, _ = step_terms(Xr, st, sp)
+        sp = np.repeat((N_run >= 61).astype(float), n); lag = np.repeat((N_run - 60) / 10, n)
+        tm, _ = step_terms(Xr, st, sp, lag)
         eps = np.repeat(sig_c * rng.standard_normal(R), n)
         a = (rng.random(R * n) < expit(Xr[:, 0] + sum(tm.values()) + eps)).astype(float)
         Nt = a.reshape(R, n).sum(1)
         G = (np.repeat(Nt, n) - a <= 59).astype(float); S = (np.repeat(Nt, n) - a >= 61).astype(float)
         update(Xr, st, a, np.repeat(Nt, n), sp, G, S)
-        Ns[:, t] = Nt; A[:, :, t] = a.reshape(R, n).astype(np.int8); sp_run = (Nt >= 61).astype(float)
+        Ns[:, t] = Nt; A[:, :, t] = a.reshape(R, n).astype(np.int8); N_run = Nt
     return Ns, A
 
 
@@ -143,14 +147,16 @@ def knockouts(X, terms):
             Y[:, c] = 0.0
         Y[:, 0] = Y[:, 0] + sum(terms[k].mean(1) for k in keys)
         return Y
-    med = X.copy(); med[:, :12] = np.median(X[:, :12], 0)
+    cols = [c for c in range(15) if c != 12]
+    med = X.copy(); med[:, cols] = np.median(X[:, cols], 0)
     shuf = X.copy(); rng = np.random.default_rng(11)
-    for c in range(12):
+    for c in cols:
         shuf[:, c] = rng.permutation(X[:, c])
     def set_delta(f):
         Y = X.copy(); Y[:, 6] = f(X[:, 6]); return Y
     return {"去习惯（H 与 D）": drop("HD", [1, 9]), "去慢漂移（D）": drop("D", [9]), "去近期信念（L）": drop("L", [2]),
             "去状态预测（B）": drop("B", [4]), "去世界模型（B 与 L）": drop("BL", [2, 4]),
+            "去分级反应（R）": drop("R", [13]), "去全部公共信息（B、L、R）": drop("BLR", [2, 4, 13]),
             "状态预测无方向（δ = 0）": set_delta(lambda d: 0 * d), "全体反转（δ = +|δ|）": set_delta(np.abs),
             "全体外推（δ = −|δ|）": set_delta(lambda d: -np.abs(d)), "同质人群（参数取中位数）": med, "打乱人群（参数列独立置换）": shuf}
 
@@ -176,7 +182,8 @@ if __name__ == "__main__":
     ko = knockouts(X, terms)
     gains = {}
     for k, Y in [("完整", X), ("去近期信念（L）", ko["去近期信念（L）"]), ("去状态预测（B）", ko["去状态预测（B）"]),
-                 ("去世界模型（B 与 L）", ko["去世界模型（B 与 L）"]), ("去习惯（H 与 D）", ko["去习惯（H 与 D）"])]:
+                 ("去分级反应（R）", ko["去分级反应（R）"]), ("去全部公共信息（B、L、R）", ko["去全部公共信息（B、L、R）"]),
+                 ("去习惯（H 与 D）", ko["去习惯（H 与 D）"])]:
         Ns0, A0 = simulate(Y, B // 2, 4, sig_c)
         base = Ns0.mean()
         p_bar = A0.astype(float).mean((0, 2)); slope = float((p_bar * (1 - p_bar)).sum())
