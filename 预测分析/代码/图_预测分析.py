@@ -174,3 +174,41 @@ for ax, (title, sets, arms) in zip(axs[0], panels):
 axs[0][0].set_ylabel("真值与估计值的相关 / 判对比例")
 fig.tight_layout(); fig.savefig(OUT / "图P10_参数恢复.png", dpi=200); plt.close(fig)
 print("ok P10")
+
+# ---------- P11 宏观秩序的来源：成分拆分 + 扰动自稳 ----------
+d17 = J("s17_宏观秩序的生成.json")
+order = ["完整人群", "去习惯（κ = 0，ψ = 0）", "去 λ", "去共同冲击（σ = 0）", "偏好统一（b = 中位数）", "去信念（β = 0）",
+         "全体反向（β = −|β|）", "全体外推（β = +|β|）", "打乱人群（参数独立置换）", "同质人群（中位数参数）"]
+short = ["完整", "去习惯", "去 λ", "去共同冲击", "偏好统一", "去信念", "全体反向", "全体外推", "参数打乱", "同质人群"]
+A_ = d17["A 成分拆分"]
+fig, axs = plt.subplots(1, 3, figsize=(10.2, 3.4), gridspec_kw=dict(width_ratios=[1.15, 1.15, 1]))
+y = np.arange(len(order))[::-1]
+mu = [A_[k]["均值"]["均值"] for k in order]; sdv = [A_[k]["SD"]["均值"] for k in order]
+cols = [ORANGE if k == "完整人群" else GREY for k in order]
+axs[0].barh(y, mu, color=cols, edgecolor="white"); axs[0].axvline(60, color=INK, lw=0.8, ls=":")
+axs[0].set_yticks(y); axs[0].set_yticklabels(short, fontsize=8); axs[0].set_xlabel("平均人数（虚线 = 容量 60）"); axs[0].set_xlim(25, 66)
+axs[1].barh(y, sdv, color=cols, edgecolor="white"); axs[1].axvline(d17["真实"]["SD"], color=INK, lw=0.8, ls=":")
+axs[1].set_yticks(y); axs[1].set_yticklabels([]); axs[1].set_xlabel("人数的 SD（虚线 = 真实 5.7）")
+B_ = d17["B 扰动自稳"]["格"]; dbs = ["-1.0", "-0.5", "0.0", "0.5", "1.0"]; xs = [-1, -.5, 0, .5, 1]
+for k, col, lab in (("完整", ORANGE, "完整"), ("去 λ", BLUE, "去 λ"), ("去信念", INK, "去信念"), ("去信念且去 λ", MUTED, "去信念且去 λ")):
+    axs[2].plot(xs, [B_[k]["各Δb"][d]["均值"] for d in dbs], "-o", color=col, ms=3.5, lw=1.6, label=f"{lab}（吸收 {max(B_[k]['自稳增益'], 0):.0%}）")
+axs[2].axhline(60, color=INK, lw=0.8, ls=":"); axs[2].set_xlabel("给所有人去的倾向加的推动 Δb"); axs[2].set_ylabel("平均人数")
+axs[2].legend(frameon=False, fontsize=7, loc="upper left")
+fig.tight_layout(); fig.savefig(OUT / "图P11_宏观秩序的来源.png", dpi=200); plt.close(fig)
+
+# ---------- P12 频率依赖：外推者越多越吃亏，得分相等处人数恰在容量 ----------
+d18 = J("s18_内部模型为什么会产生.json"); fb = d18["A 频率依赖：选择中的信念方向（β > 0 外推）"]
+rows = fb["各比例"]; f_ = np.array([r["f"] for r in rows])
+pp = np.array([np.nan if r["正向者得分"] is None else r["正向者得分"] for r in rows]); pm = np.array([np.nan if r["负向者得分"] is None else r["负向者得分"] for r in rows])
+fig, axs = plt.subplots(1, 2, figsize=(8.2, 3.2))
+axs[0].plot(f_, pp, "-o", color=ORANGE, ms=4, lw=1.8, label="外推者（β > 0）的得分")
+axs[0].plot(f_, pm, "-o", color=BLUE, ms=4, lw=1.8, label="反向者（β < 0）的得分")
+axs[0].axvline(fb["得分相等的比例"], color=INK, lw=0.8, ls="--"); axs[0].axvline(fb["真实比例"], color=MUTED, lw=4, alpha=0.35)
+axs[0].text(fb["得分相等的比例"] + 0.02, 0.60, f"得分相等\nf* = {fb['得分相等的比例']:.2f}", fontsize=7.5)
+axs[0].text(fb["真实比例"] - 0.30, 0.62, f"真实人群\nf = {fb['真实比例']:.2f}", fontsize=7.5, color=MUTED)
+axs[0].set_xlabel("人群中外推者的比例 f"); axs[0].set_ylabel("每人每轮平均得分"); axs[0].legend(frameon=False, fontsize=7.5, loc="upper right")
+axs[1].plot(f_, [r["平均人数"] for r in rows], "-o", color=INK, ms=4, lw=1.6)
+axs[1].axhline(60, color=INK, lw=0.8, ls=":"); axs[1].axvline(fb["得分相等的比例"], color=INK, lw=0.8, ls="--"); axs[1].axvline(fb["真实比例"], color=MUTED, lw=4, alpha=0.35)
+axs[1].set_xlabel("人群中外推者的比例 f"); axs[1].set_ylabel("平均人数（虚线 = 容量）")
+fig.tight_layout(); fig.savefig(OUT / "图P12_频率依赖.png", dpi=200); plt.close(fig)
+print("ok P11 P12")
