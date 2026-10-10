@@ -9,9 +9,12 @@
   群体层面的模型比较：iBIC = −2 Σ_i log p(D_i | m) + 2k·log(总观测数)（Huys et al., 2011；每个参数有 μ、σ² 两个超参数）
   起点：真实数据——一步惯性的模型从 s21 的解出发；习惯痕迹的模型从对应一步模型的 s21 解出发，α_H 逐人在网格上取似然最大者
         假数据——每人从该模型真实拟合的群体均值出发（不用个人真值），先验取真实拟合的 (μ, σ²)
+  后验预测检查：用 IB、IFB、HB、HFB 的真实拟合值各模拟 20 套数据，做与真实数据相同的 logistic 回归
+        （合并所有人、个人固定截距；自己 t−1…t−5 的选择、t−1 与 t−2 的状态、"自己 × 状态"），比较系数
 用法：python3 s22_习惯痕迹审计.py 拟合 <数据集> <模型>    数据集 = 真实，或 <生成模型>_<重复号>（用该模型的真实拟合值生成）
       python3 s22_习惯痕迹审计.py 汇总 <数据集>
-输出：结果/s22_<数据集>_<模型>.json、结果/s22_<数据集>_汇总.json
+      python3 s22_习惯痕迹审计.py 预测检查
+输出：结果/s22_<数据集>_<模型>.json、结果/s22_<数据集>_汇总.json、结果/s22_预测检查.json
 """
 import sys, json, time, importlib.util, pathlib
 import numpy as np
@@ -146,8 +149,40 @@ def start(name, m, A_, P_):
     return to_U(X, m), mu, s2
 
 
+LAG_LABELS = [f"自己 t-{k}" for k in range(1, 6)] + ["状态 t-1", "状态 t-2", "自己×状态 t-1", "自己×状态 t-2"]
+
+
+def lag_coefs(A_, se=False):
+    """合并所有人的 logistic 回归（个人固定截距；±1 编码）：自己 t−1…t−5 的选择、t−1 与 t−2 的状态（挤 = +1）及交互。
+    逐人回归的人均系数受个别近乎完全分离的人影响太大，故用合并估计。se=True 时另返回按人聚类的 z 值。"""
+    import warnings
+    import statsmodels.api as sm
+    L = 5; t = np.arange(L, T); rows = A_.shape[0]
+    c = np.stack([2 * A_[:, t - k] - 1 for k in range(1, L + 1)], -1)
+    s = np.stack([np.broadcast_to(2 * CROWD_PREV[t - k + 1] - 1, (rows, len(t))) for k in (1, 2)], -1)
+    Z = np.concatenate([c, s, c[..., :2] * s], -1).reshape(-1, 9)
+    D = np.kron(np.eye(rows), np.ones((len(t), 1)))
+    kw = dict(cov_type="cluster", cov_kwds={"groups": np.repeat(np.arange(rows), len(t))}) if se else {}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        r = sm.Logit(A_[:, t].reshape(-1), np.hstack([Z, D])).fit(disp=0, method="newton", maxiter=50, **kw)
+    return (r.params[:9], r.tvalues[:9]) if se else r.params[:9]
+
+
 if __name__ == "__main__":
-    mode, name = sys.argv[1], sys.argv[2]
+    mode = sys.argv[1]; name = sys.argv[2] if len(sys.argv) > 2 else None
+    if mode == "预测检查":
+        b, z = lag_coefs(S20.A, se=True)
+        res = {"真实": dict(系数=b.round(3).tolist(), z=z.round(2).tolist())}
+        for m in ["IB", "IFB", "HB", "HFB"]:
+            X = np.array(json.loads((PL.OUT / f"s22_真实_{m}.json").read_text(encoding="utf-8"))["X"])
+            sims = [lag_coefs(run(X, None, None, None, rng=np.random.default_rng(5000 + r))[0]) for r in range(20)]
+            res[m] = dict(均值=np.mean(sims, 0).round(3).tolist(), 模拟间标准差=np.std(sims, 0).round(3).tolist())
+            print(m, flush=True)
+        out = dict(变量=LAG_LABELS, **res)
+        PL.save(out, "s22_预测检查.json")
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        sys.exit()
     Ntot = float((T + OKP.sum(1)).sum())
     if mode == "拟合":
         m = sys.argv[3]
