@@ -5,6 +5,7 @@
   A1 ABM 的人数自相关 ACF1–4：真实值与各版本模型的闭环模拟（均值 ± 模拟间 SD）
   A2 预测者生态：反转者比例与人数 SD、效率（s32），并标出真实分配
   A3 扰动自稳：各敲除下的自稳增益（s27，主模型）
+  M6 样本外预测：交错区组与前后半程两种交叉验证下，各模型相对主模型的检验负对数似然（s28、s35）
 输出：结果/图/图M*_*.png
 """
 import json, importlib.util, pathlib
@@ -97,4 +98,20 @@ ax.set_yticks(ys); ax.set_yticklabels(labs); ax.axvline(0, color=INK, lw=0.8); a
 ax.set_xlabel("自稳增益 = 1 − 实际平移 / 无反馈平移（Δb 四档的平均）")
 ax.set_title("扰动自稳来自世界层（公共信息）", fontsize=9.5)
 fig.tight_layout(); fig.savefig(OUT / "图M5_扰动自稳.png", dpi=200); plt.close(fig)
+# ---------- M6 ----------
+cvs = J("s35_汇总.json")
+mods = [("HDWG1", "去近期信念 L"), ("HDWL1", "去分级反应 κ"), ("HDWLG", "去 λ1"), ("HDWFG1", "L 换成 MF"), ("HDWLT1", "κ 随时间变化")]
+fig, ax = plt.subplots(figsize=(5.8, 3.0))
+ys = np.arange(len(mods))[::-1]; h = 0.36
+for j, (scheme, col, lab) in enumerate((("交错区组", BLUE, "交错区组（同一时期内泛化）"), ("前后半程", ORANGE, "前后半程（跨时间泛化）"))):
+    v = np.array([cvs[scheme][m]["合计"] for m, _ in mods])
+    shown = np.clip(v, -400, 400)
+    ax.barh(ys + (0.5 - j) * h, shown, height=h, color=col, label=lab)
+    for y, a, b in zip(ys + (0.5 - j) * h, v, shown):
+        ax.text(b + (8 if b >= 0 else -8), y, f"{a:+.0f}", va="center", ha="left" if b >= 0 else "right", fontsize=7.5)
+ax.set_yticks(ys); ax.set_yticklabels([l for _, l in mods]); ax.axvline(0, color=INK, lw=0.8); ax.set_xlim(-520, 520)
+ax.set_xlabel("检验负对数似然相对主模型（正 = 预测更差；超出 ±400 截断显示）")
+ax.set_title("样本外预测：κ 在同一时期内泛化，但随时间变化", fontsize=9.5)
+ax.legend(frameon=False, fontsize=7.5, loc="upper right")
+fig.tight_layout(); fig.savefig(OUT / "图M6_交叉验证.png", dpi=200); plt.close(fig)
 print("完成")
