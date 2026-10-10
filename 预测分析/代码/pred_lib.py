@@ -11,8 +11,12 @@ import numpy as np
 import pandas as pd
 W = Path(__file__).resolve().parents[1]
 OUT = W / "结果"
-L4 = W.parent / "宏观调节双系统" / "代码"
+# 第 4 层的共用库与拟合：仓库中在 预测分析/ 的同级目录；交付包中在本文件夹的 依赖/ 下
+L4 = next((p for p in (W / "依赖" / "宏观调节双系统" / "代码", W.parent / "宏观调节双系统" / "代码") if (p / "arb_lib.py").exists()),
+          W.parent / "宏观调节双系统" / "代码")
 sys.path.insert(0, str(L4))
+for _d in ("结果", "检查点", "日志"):
+    (W / _d).mkdir(exist_ok=True)
 import arb_lib as L                                   # noqa: E402
 
 T, CAP = L.T, L.CAP
