@@ -10,7 +10,7 @@
     另报告：w_B（世界模型在选择中的权重）、选择侧状态效应与模型 δ 的相关
   C 两个系统的控制份额：每人在真实历史上 |习惯项|（H + D）与 |世界层各项|（W + L + λ）的平均绝对贡献之比
   D 内部模型的稳定性：前后半程分别计算不依赖模型的 δ，跨人相关
-用法：python3 s31_内部模型的内容.py <模型>     模型取 s28 的真实拟合（如 HDWLG1）
+用法：python3 s31_内部模型的内容.py <模型>     模型取 s28 的真实拟合（如 HDWLG1），或 s35:<模型>
 输出：结果/s31_内部模型_<模型>.json
 """
 import sys, json, importlib.util, pathlib
@@ -46,7 +46,8 @@ def corr(x, y):
 
 if __name__ == "__main__":
     m = sys.argv[1]
-    S27.SRC[m] = f"s28_真实_{m}.json"; S27.FIXED[m] = (-50.0 if "F" in m else 50.0, 1.0)
+    if ":" not in m:
+        S27.SRC[m] = f"s28_真实_{m}.json"; S27.FIXED[m] = (-50.0 if "F" in m else 50.0, 1.0)
     X = S27.load(m)
     delta, eta, kap, sig, wB, wI, wD = X[:, 6], expit(X[:, 5]), X[:, 14], np.exp(X[:, 7]), X[:, 4], X[:, 1], X[:, 9]
     q = lambda v: [round(float(x), 4) for x in np.percentile(v, [10, 25, 50, 75, 90])]
@@ -74,5 +75,5 @@ if __name__ == "__main__":
     half = np.arange(T) < T // 2
     f1, c1 = state_contrast(half); f2, c2 = state_contrast(~half)
     out["D 稳定性（前后半程）"] = dict(预测侧δ=corr(f1, f2), 选择侧状态效应=corr(c1, c2))
-    PL.save(out, f"s31_内部模型_{m}.json")
+    PL.save(out, f"s31_内部模型_{m.replace(':', '_')}.json")
     print(json.dumps(out, ensure_ascii=False, indent=1))

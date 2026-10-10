@@ -18,7 +18,7 @@
   指标：平均人数、|平均 − 60|、SD、ACF1–4、挤的轮次比例、效率（每人每轮得分：去且不挤 1，不去且挤 0.7）、换选择率、
         个人去的比例的 SD、常客（去的比例 > .8）、几乎不去（< .2）
 用法：python3 s27_ABM.py <模型> [B]      模型 = HDLB（s25）、HLB / HW / HDW / HWL / HDWL（s26）、HB（s22）、HDB（s23）、
-      s29 / s30 的模型名，或 s28:<模型>（s28 的最终拟合）
+      s29 / s30 的模型名，或 s28:<模型> / s35:<模型>（该步的真实拟合；s35:HDWLT1 的 κ 随时间线性变化）
 输出：结果/s27_ABM_<模型>.json
 """
 import sys, json
@@ -42,12 +42,12 @@ FIXED = {"HDLB": (50.0, 0.0), "HDEB": (None, 0.0), "HB": (-50.0, 0.0), "HDB": (-
 
 
 def load(m):
-    """读取模型的个人参数，补成 17 列（与 s30 相同：b, wI, wF, aF, wB, η, δ, lnσ, aH, wD, aD, dE, W, λ1, κ, λ2, λ4）。
-    名字以 "s28:" 开头时取 s28 的最终拟合（如 s28:HDWLG1）。"""
-    if m.startswith("s28:"):
-        SRC[m] = f"s28_真实_{m[4:]}.json"; FIXED[m] = (-50.0 if "F" in m[4:] else 50.0, 1.0)
+    """读取模型的个人参数，补成 18 列（与 s35 相同：b, wI, wF, aF, wB, η, δ, lnσ, aH, wD, aD, dE, W, λ1, κ, λ2, λ4, κ1）。
+    名字以 "s28:" / "s35:" 开头时取该步的真实拟合（如 s28:HDWLG1、s35:HDWLT1）。"""
+    if m.startswith("s28:") or m.startswith("s35:"):
+        SRC[m] = f"{m[:3]}_真实_{m[4:]}.json"; FIXED[m] = (-50.0 if "F" in m[4:] else 50.0, 1.0)
     X = np.array(json.loads((PL.OUT / SRC[m]).read_text(encoding="utf-8"))["X"])
-    Y = np.zeros((X.shape[0], 17)); Y[:, :X.shape[1]] = X
+    Y = np.zeros((X.shape[0], 18)); Y[:, :X.shape[1]] = X
     dE, W = FIXED[m]
     if dE is not None:
         Y[:, 11] = dE
@@ -55,9 +55,10 @@ def load(m):
     return Y
 
 
-def step_terms(X, st, hist):
-    """当前状态下各项对 logit 的贡献。st：状态字典；hist：每行前 1–4 轮的人数 (行, 4)。"""
-    wI, wF, wB, delta, sig, wD, kap = X[:, 1], X[:, 2], X[:, 4], X[:, 6], np.exp(X[:, 7]), X[:, 9], X[:, 14]
+def step_terms(X, st, hist, t):
+    """当前状态下各项对 logit 的贡献。st：状态字典；hist：每行前 1–4 轮的人数 (行, 4)；t：轮次（κ_t = κ + κ1·(t/T − 0.5)）。"""
+    wI, wF, wB, delta, sig, wD = X[:, 1], X[:, 2], X[:, 4], X[:, 6], np.exp(X[:, 7]), X[:, 9]
+    kap = X[:, 14] + X[:, 17] * (t / T - 0.5)
     lag = (hist - 60) / 10; sp = (hist[:, 0] >= 61).astype(float)
     Mp = np.where(X[:, 12] > 0.5, st["mu"] + delta / 2 * (1 - 2 * sp) + kap * lag[:, 0], np.where(sp > 0.5, st["Mc"], st["Mn"]))
     p = ndtr((60.5 - Mp) / sig)
@@ -88,7 +89,7 @@ def open_loop(X):
     n = X.shape[0]; st = init_state(X); terms = {k: np.zeros((n, T)) for k in "HDLBR"}; P = np.zeros((n, T))
     hist = np.tile(PRE, (n, 1))
     for t in range(T):
-        tm, _, sp = step_terms(X, st, hist)
+        tm, _, sp = step_terms(X, st, hist, t)
         for k in tm:
             terms[k][:, t] = tm[k]
         P[:, t] = expit(X[:, 0] + sum(tm.values()))
@@ -111,7 +112,7 @@ def simulate(X, R, seed, sig_c, db=0.0):
     st = init_state(Xr); hist_run = np.tile(PRE, (R, 1))
     Ns = np.zeros((R, T)); A = np.zeros((R, n, T), dtype=np.int8)
     for t in range(T):
-        tm, _, sp = step_terms(Xr, st, np.repeat(hist_run, n, axis=0))
+        tm, _, sp = step_terms(Xr, st, np.repeat(hist_run, n, axis=0), t)
         eps = np.repeat(sig_c * rng.standard_normal(R), n)
         a = (rng.random(R * n) < expit(Xr[:, 0] + sum(tm.values()) + eps)).astype(float)
         Nt = a.reshape(R, n).sum(1)
@@ -161,7 +162,7 @@ def knockouts(X, terms):
         for c in cols:
             Y[:, c] = 0.0
         return recenter(X, Y)
-    cols = [c for c in range(17) if c not in (11, 12)]
+    cols = [c for c in range(18) if c not in (11, 12)]
     med = X.copy(); med[:, cols] = np.median(X[:, cols], 0)
     shuf = X.copy(); rng = np.random.default_rng(11)
     for c in cols:
@@ -169,7 +170,7 @@ def knockouts(X, terms):
     def set_delta(f):
         Y = X.copy(); Y[:, 6] = f(X[:, 6]); return Y
     return {"去习惯（H 与 D）": drop([1, 9]), "去慢漂移（D）": drop([9]), "去近期信念（L）": drop([2]),
-            "去状态预测（B）": drop([4]), "去世界模型中的分级（κ = 0）": drop([14]), "去世界模型（B 与 L）": drop([2, 4]),
+            "去状态预测（B）": drop([4]), "去世界模型中的分级（κ = 0）": drop([14, 17]), "去世界模型（B 与 L）": drop([2, 4]),
             "去选择端的滞后反应（λ1、λ2、λ4）": drop([13, 15, 16]), "只去 λ4": drop([16]), "只去 λ2": drop([15]),
             "去全部公共信息（B、L、λ）": drop([2, 4, 13, 15, 16]),
             "状态预测无方向（δ = 0）": set_delta(lambda d: 0 * d), "全体反转（δ = +|δ|）": set_delta(np.abs),
