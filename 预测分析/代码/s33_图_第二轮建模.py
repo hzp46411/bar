@@ -47,12 +47,13 @@ items = [(k, J(f"s28_真实_{v}.json")["iBIC"] - ib0) for k, v in cand.items()]
 fig, ax = plt.subplots(figsize=(5.6, 3.4))
 ys = np.arange(len(items))[::-1]
 vals = np.array([v for _, v in items])
-ax.barh(ys, np.sign(vals) * np.log10(1 + np.abs(vals)), color=[ORANGE if v > 10 else (BLUE if v < -10 else MUTED) for v in vals], height=0.6)
+ax.barh(ys, vals, color=[ORANGE if v > 10 else (BLUE if v < -10 else MUTED) for v in vals], height=0.6)
 for y, v in zip(ys, vals):
-    ax.text(np.sign(v) * np.log10(1 + abs(v)) + (0.05 if v >= 0 else -0.05), y, f"{v:+.0f}", va="center", ha="left" if v >= 0 else "right", fontsize=8, color=INK)
+    ax.text(v * 1.08 + 0.3, y, f"{v:+.0f}", va="center", ha="left", fontsize=8, color=INK)
+ax.set_xscale("symlog", linthresh=10); ax.set_xlim(0, 4000)
+ax.set_xticks([0, 10, 100, 1000]); ax.set_xticklabels(["0", "10", "100", "1000"])
 ax.set_yticks(ys); ax.set_yticklabels([k for k, _ in items]); ax.axvline(0, color=INK, lw=0.8)
-ticks = [-2, -1, 0, 1, 2, 3, 4]; ax.set_xticks(ticks); ax.set_xticklabels([f"{np.sign(t) * (10 ** abs(t) - 1):.0f}" for t in ticks])
-ax.set_xlabel("相对主模型的 iBIC 变化（对数刻度；正 = 变差）")
+ax.set_xlabel("相对主模型的 iBIC 变化（10 以上为对数刻度；正 = 变差）")
 ax.set_title("主模型（习惯 + 世界模型）的成分敲除", fontsize=9.5)
 fig.tight_layout(); fig.savefig(OUT / "图M2_成分敲除.png", dpi=200); plt.close(fig)
 
@@ -91,8 +92,8 @@ fig, ax = plt.subplots(figsize=(5.4, 2.8))
 ys = np.arange(len(labs))[::-1]
 ax.barh(ys, vals, color=[BLUE if v > 0 else ORANGE for v in vals], height=0.6)
 for y, v in zip(ys, vals):
-    ax.text(v + (0.03 if v >= 0 else -0.03), y, f"{v:.2f}", va="center", ha="left" if v >= 0 else "right", fontsize=8)
-ax.set_yticks(ys); ax.set_yticklabels(labs); ax.axvline(0, color=INK, lw=0.8)
+    ax.text(v + 0.03 if v >= 0 else 0.03, y, f"{v:.2f}", va="center", ha="left", fontsize=8)
+ax.set_yticks(ys); ax.set_yticklabels(labs); ax.axvline(0, color=INK, lw=0.8); ax.set_xlim(min(vals) - 0.1, 1.15)
 ax.set_xlabel("自稳增益 = 1 − 实际平移 / 无反馈平移（Δb 四档的平均）")
 ax.set_title("扰动自稳来自世界层（公共信息）", fontsize=9.5)
 fig.tight_layout(); fig.savefig(OUT / "图M5_扰动自稳.png", dpi=200); plt.close(fig)
