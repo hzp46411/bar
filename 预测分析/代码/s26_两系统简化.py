@@ -9,10 +9,11 @@
     平均水平 μ 每轮更新：μ ← μ + η (N_t − μ)，初值 60
     预测 y_t ~ N(E_t, σ²)；选择中 w_B·(1.7p − 0.7)，p = Φ((60.5 − E_t)/σ)
     （B 的 M(挤)、M(不挤) 各自只在对应状态之后更新；η = 0 时 W 与 B 完全相同）
-  模型：HLB；HW = H + W；HDW = H + D + W；HWL = H + W + L（合并之后 L 是否仍然需要）
+  模型：HLB；HW = H + W；HDW = H + D + W；HWL = H + W + L（合并之后 L 是否仍然需要）；HDWL = H + D + W + L
         对照取已有结果：HDLB（s25）、HDB（s23）、HB（s22）
   估计与比较：与 s22–s25 相同（层级 EM 最多 20 轮；iBIC）
-  起点：HLB、HWL 从 s25 中 HDLB 的解出发（去掉 D）；HW、HDW 分别从 s22 的 HB、s23 的 HDB 出发；含 W 的模型 η 逐人取网格
+  起点：HLB、HWL 从 s25 中 HDLB 的解出发（去掉 D）；HW、HDW 分别从 s22 的 HB、s23 的 HDB 出发；含 W 的模型 η 逐人取网格；
+        HDWL 从 HDW 的解出发，L 的 (w_F, a_F) 取 HWL 的解
 用法：python3 s26_两系统简化.py 拟合 <模型> | 汇总
 输出：结果/s26_真实_<模型>.json、结果/s26_真实_汇总.json
 """
@@ -25,10 +26,11 @@ spec = importlib.util.spec_from_file_location("s25", str(pathlib.Path(__file__).
 S25 = importlib.util.module_from_spec(spec); spec.loader.exec_module(S25)
 S23, S22, S21, S20 = S25.S23, S25.S22, S25.S21, S25.S20
 n, T, G, S, OKP, CROWD_PREV, ONE_STEP = S25.n, S25.T, S25.G, S25.S, S25.OKP, S25.CROWD_PREV, S25.ONE_STEP
-NEW = ["HLB", "HW", "HDW", "HWL"]
-FREE = {"HLB": [0, 5, 6, 7, 1, 8, 2, 3, 4], "HW": [0, 5, 6, 7, 1, 8, 4], "HDW": [0, 5, 6, 7, 1, 8, 9, 10, 4], "HWL": [0, 5, 6, 7, 1, 8, 2, 3, 4]}
+NEW = ["HLB", "HW", "HDW", "HWL", "HDWL"]
+FREE = {"HLB": [0, 5, 6, 7, 1, 8, 2, 3, 4], "HW": [0, 5, 6, 7, 1, 8, 4], "HDW": [0, 5, 6, 7, 1, 8, 9, 10, 4], "HWL": [0, 5, 6, 7, 1, 8, 2, 3, 4],
+        "HDWL": [0, 5, 6, 7, 1, 8, 9, 10, 2, 3, 4]}
 FIXED_dE = {m: (50.0 if "L" in m else -50.0) for m in NEW}               # 含 L 的模型 δ_EWA = 1
-WORLD = {"HLB": 0.0, "HW": 1.0, "HDW": 1.0, "HWL": 1.0}                 # 第 13 列：0 = 状态预测 B，1 = 统一世界模型 W
+WORLD = {"HLB": 0.0, "HW": 1.0, "HDW": 1.0, "HWL": 1.0, "HDWL": 1.0}                 # 第 13 列：0 = 状态预测 B，1 = 统一世界模型 W
 ULO, UHI = S25.ULO, S25.UHI
 ETA_GRID = [-7.0, -5.0, -3.5, -2.0, -1.0]
 
@@ -104,6 +106,11 @@ def eta_grid(X):
 
 
 def start(m):
+    if m == "HDWL":
+        X = widen(np.array(json.loads((PL.OUT / "s26_真实_HDW.json").read_text(encoding="utf-8"))["X"]), m)
+        X[:, 2:4] = np.array(json.loads((PL.OUT / "s26_真实_HWL.json").read_text(encoding="utf-8"))["X"])[:, 2:4]
+        U = to_U(X, m)
+        return U, U.mean(0), np.maximum(U.var(0), 1e-2)
     src = {"HLB": "s25_真实_HDLB.json", "HWL": "s25_真实_HDLB.json", "HW": "s22_真实_HB.json", "HDW": "s23_真实_HDB.json"}[m]
     X = widen(np.array(json.loads((PL.OUT / src).read_text(encoding="utf-8"))["X"]), m)
     if "D" not in m:
@@ -138,7 +145,8 @@ if __name__ == "__main__":
                          "统一世界模型 对 B + L（HW − HLB）": round(ib["HW"] - ib["HLB"], 1),
                          "统一世界模型 对 状态预测（HW − HB）": round(ib["HW"] - ib["HB"], 1),
                          "合并之后 L 是否仍需要（HWL − HW）": round(ib["HWL"] - ib["HW"], 1),
-                         "含 D 时：HDW − HDB": round(ib["HDW"] - ib["HDB"], 1)},
-                   W的学习率η=({m: q(expit(np.array(D[m]["X"])[:, 5])) for m in ("HW", "HDW", "HWL")}))
+                         "含 D 时：HDW − HDB": round(ib["HDW"] - ib["HDB"], 1),
+                         "有 D 与 W 时 L 是否仍需要（HDWL − HDW）": round(ib["HDWL"] - ib["HDW"], 1)},
+                   W的学习率η=({m: q(expit(np.array(D[m]["X"])[:, 5])) for m in ("HW", "HDW", "HWL", "HDWL")}))
         PL.save(out, "s26_真实_汇总.json")
         print(json.dumps(out, ensure_ascii=False, indent=1))

@@ -14,7 +14,7 @@
      对 完整、去近期信念、去状态预测、去世界模型、去习惯 分别计算
   指标：平均人数、|平均 − 60|、SD、ACF1–4、挤的轮次比例、效率（每人每轮得分：去且不挤 1，不去且挤 0.7）、换选择率、
         个人去的比例的 SD、常客（去的比例 > .8）、几乎不去（< .2）
-用法：python3 s27_ABM.py <模型> [B]      模型 = HDLB（s25）、HLB / HW / HDW / HWL（s26）、HB（s22）、HDB（s23）
+用法：python3 s27_ABM.py <模型> [B]      模型 = HDLB（s25）、HLB / HW / HDW / HWL / HDWL（s26）、HB（s22）、HDB（s23）
 输出：结果/s27_ABM_<模型>.json
 """
 import sys, json
@@ -28,9 +28,10 @@ N_REAL = PL.N.astype(float)
 N_FULL = PL._raw.iloc[0, 1:].astype(float).values
 CROWD0 = float(N_FULL[-T - 1] >= 61)                                    # 第 1 轮之前的状态
 SRC = {"HDLB": "s25_真实_HDLB.json", "HDEB": "s25_真实_HDEB.json", "HB": "s22_真实_HB.json", "HDB": "s23_真实_HDB.json",
-       "HLB": "s26_真实_HLB.json", "HW": "s26_真实_HW.json", "HDW": "s26_真实_HDW.json", "HWL": "s26_真实_HWL.json"}
+       "HLB": "s26_真实_HLB.json", "HW": "s26_真实_HW.json", "HDW": "s26_真实_HDW.json", "HWL": "s26_真实_HWL.json",
+       "HDWL": "s26_真实_HDWL.json"}
 FIXED = {"HDLB": (50.0, 0.0), "HDEB": (None, 0.0), "HB": (-50.0, 0.0), "HDB": (-50.0, 0.0),
-         "HLB": (50.0, 0.0), "HW": (-50.0, 1.0), "HDW": (-50.0, 1.0), "HWL": (50.0, 1.0)}   # (logit δ_EWA, 世界模型类型)
+         "HLB": (50.0, 0.0), "HW": (-50.0, 1.0), "HDW": (-50.0, 1.0), "HWL": (50.0, 1.0), "HDWL": (50.0, 1.0)}   # (logit δ_EWA, 世界模型类型)
 
 
 def load(m):
