@@ -150,3 +150,27 @@ ax.set_xlabel("从选择估出的学习率 ρ（HRGPR）"); ax.set_ylabel("从�
 ax.set_title(f"Spearman = {spearmanr(rp, rc)[0]:.2f}", fontsize=9)
 fig.tight_layout(); fig.savefig(OUT / "图P9_两种学习率.png", dpi=200); plt.close(fig)
 print("ok P8 P9")
+
+# ---------- P10 参数恢复：只用选择 vs 选择 + 预测 ----------
+import glob
+def load_sets(pattern):
+    return [J(pathlib_name) for pathlib_name in sorted(p.split("/")[-1] for p in glob.glob(str(PL.OUT / pattern)))]
+MET = [("ρ_Spearman", "ρ\n（Spearman）"), ("ρ_类别判对比例", "ρ 类别\n判对比例"), ("β_相关", "β"), ("κ_相关", "κ"), ("b_相关", "b")]
+sb = load_sets("s14b_联合模型恢复_套*.json"); sc = load_sets("s14c_两种学习率下的恢复_套*.json")
+panels = [("真值：预测与选择共用学习率（J1）", sb, [("只用选择（HRGPR）", GREY, "只用选择"), ("选择 + 预测（J1）", ORANGE, "选择 + 预测")])]
+if sc:
+    panels.append(("真值：两个学习率不同（J2）", sc, [("只用选择（HRGPR）", GREY, "只用选择"), ("选择 + 预测，两个学习率（J2，设定正确）", ORANGE, "选择 + 预测（J2）"),
+                                                ("选择 + 预测，共用学习率（J1，设定错误）", BLUE, "选择 + 预测（J1，设定错）")]))
+fig, axs = plt.subplots(1, len(panels), figsize=(3.9 * len(panels) + 0.4, 3.2), sharey=True, squeeze=False)
+for ax, (title, sets, arms) in zip(axs[0], panels):
+    x = np.arange(len(MET)); w = 0.8 / len(arms)
+    for j, (key, col, lab) in enumerate(arms):
+        vals = np.array([[row[key][m] for m, _ in MET] for d in sets for row in d["套"]])
+        xx = x + (j - (len(arms) - 1) / 2) * w
+        ax.bar(xx, vals.mean(0), width=w * 0.92, color=col, edgecolor="white", label=lab)
+        for v in vals: ax.scatter(xx, v, s=8, color=INK, zorder=3)
+    ax.set_xticks(x); ax.set_xticklabels([l for _, l in MET], fontsize=8); ax.set_ylim(0.5, 1.0)
+    ax.set_title(title, fontsize=9); ax.legend(frameon=False, fontsize=7.5, loc="lower left")
+axs[0][0].set_ylabel("真值与估计值的相关 / 判对比例")
+fig.tight_layout(); fig.savefig(OUT / "图P10_参数恢复.png", dpi=200); plt.close(fig)
+print("ok P10")
