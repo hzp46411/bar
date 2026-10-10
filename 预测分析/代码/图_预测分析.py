@@ -212,3 +212,22 @@ axs[1].axhline(60, color=INK, lw=0.8, ls=":"); axs[1].axvline(fb["得分相等�
 axs[1].set_xlabel("人群中外推者的比例 f"); axs[1].set_ylabel("平均人数（虚线 = 容量）")
 fig.tight_layout(); fig.savefig(OUT / "图P12_频率依赖.png", dpi=200); plt.close(fig)
 print("ok P11 P12")
+
+# ---------- P13 Arthur 机制：人用哪些预测规则；是否按近期准确度换规则 ----------
+d16 = J("s16_Arthur机制检验.json"); eco = d16["规则生态"]
+labs = ["锚定60", "其他", "重复自己", "镜像", "延续", "四轮均值", "八轮趋势", "两轮周期"]
+show = ["锚定 60", "个人其他", "重复自己", "镜像", "延续", "四轮均值", "八轮趋势", "两轮周期"]
+fig, axs = plt.subplots(1, 2, figsize=(8.6, 3.2), gridspec_kw=dict(width_ratios=[1.25, 1]))
+x = np.arange(len(labs)); w = 0.4
+axs[0].bar(x - w / 2, [eco["各规则的平均后验份额"][k] for k in labs], width=w, color=ORANGE, edgecolor="white", label="全体")
+axs[0].bar(x + w / 2, [eco["如实报告者_各规则份额"][k] for k in labs], width=w, color=BLUE, edgecolor="white", label="如实报告者")
+axs[0].set_xticks(x); axs[0].set_xticklabels(show, fontsize=7.5, rotation=30, ha="right"); axs[0].set_ylabel("预测归于该规则的平均后验份额")
+axs[0].legend(frameon=False, fontsize=7.5)
+prof = d16["θ 的轮廓似然与检验"]
+for r, col in (("0.1", ORANGE), ("0.3", INK), ("0.6", BLUE)):
+    th = sorted(prof[r]["轮廓"], key=float); base = prof[r]["轮廓"]["0.0"]["全体"]
+    axs[1].plot([float(t) for t in th], [prof[r]["轮廓"][t]["全体"] - base for t in th], "-o", color=col, ms=3.5, lw=1.6, label=f"准确度记忆速率 r = {r}")
+axs[1].axhline(0, color=MUTED, lw=0.7); axs[1].set_xlabel("对近期准确度的敏感度 θ"); axs[1].set_ylabel("负对数似然 − θ = 0 时的值")
+axs[1].set_ylim(-40, 200); axs[1].legend(frameon=False, fontsize=7.5, loc="lower right")
+fig.tight_layout(); fig.savefig(OUT / "图P13_Arthur机制检验.png", dpi=200); plt.close(fig)
+print("ok P13")
