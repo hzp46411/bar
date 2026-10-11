@@ -211,7 +211,7 @@ def fig5():
     a.plot(it, [x["γ"] for x in h], "-o", color=BLUE, ms=4, lw=1.8, label="γ（共同纠偏）")
     a.plot(it, [x["σ"] for x in h], "-o", color=ORANGE, ms=4, lw=1.8, label="σ$_c$（共同冲击）")
     a.text(0, h[0]["γ"] - 0.03, "两步法", fontsize=8, color=INK2)
-    a.legend(fontsize=8, loc="center right")
+    a.legend(fontsize=8, loc="lower right")
     a.set(title="A  真实数据：联合估计的收敛", xlabel="条件期望最大化的轮次（0 = 两步法起点）", ylabel="估计值", ylim=(0, 0.42))
     a = ax[1]
     if f44.exists():
@@ -222,7 +222,7 @@ def fig5():
             g = np.array([r[meth]["γ"] for r in rs]); s = np.array([r[meth]["σ"] for r in rs])
             a.scatter(g, s, color=col, s=22, edgecolor="white", linewidth=0.5, label=f"{meth}（{len(rs)} 套）")
         a.scatter([tg], [ts], marker="*", s=160, color=INK, label="真值", zorder=4)
-        a.legend(fontsize=8, loc="lower right")
+        a.legend(fontsize=8, loc="center")
         a.set(title="B  模拟数据：两步法与联合估计的恢复", xlabel="γ 的估计", ylabel="σ$_c$ 的估计")
     else:
         a.text(0.5, 0.5, "等待 s44", transform=a.transAxes, ha="center")
