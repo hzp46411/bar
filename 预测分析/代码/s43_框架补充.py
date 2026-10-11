@@ -27,23 +27,25 @@ def _load(fname, mod):
     return M
 
 
-def types():
+def classify(t_mask):
+    """逐人：预测侧 δ̂、Welch t、选择侧状态效应、类型（反转 / 外推 / 无方向）。t_mask：参与计算的轮次。"""
     T, A, P, OK = PL.T, PL.A, PL.P, PL.OK
     N = PL.N.astype(float)
     CP = (np.r_[PL._raw.iloc[0, 1:].astype(float).values[-T - 1], N[:-1]] >= 61)          # 上一轮挤（与 s31 相同）
+    d, tv, ch = (np.full(A.shape[0], np.nan) for _ in range(3))
+    for i in range(A.shape[0]):
+        ok = OK[i] & t_mask
+        x, y = P[i, ok & ~CP], P[i, ok & CP]
+        if len(x) >= 5 and len(y) >= 5:
+            d[i] = x.mean() - y.mean()
+            tv[i] = d[i] / np.sqrt(x.var(ddof=1) / len(x) + y.var(ddof=1) / len(y))
+        ch[i] = A[i, t_mask & CP].mean() - A[i, t_mask & ~CP].mean()
+    ty = np.where(tv > 1.96, "反转", np.where(tv < -1.96, "外推", "无方向"))
+    return d, tv, ch, ty
 
-    def classify(t_mask):
-        d, tv, ch = (np.full(A.shape[0], np.nan) for _ in range(3))
-        for i in range(A.shape[0]):
-            ok = OK[i] & t_mask
-            x, y = P[i, ok & ~CP], P[i, ok & CP]
-            if len(x) >= 5 and len(y) >= 5:
-                d[i] = x.mean() - y.mean()
-                tv[i] = d[i] / np.sqrt(x.var(ddof=1) / len(x) + y.var(ddof=1) / len(y))
-            ch[i] = A[i, t_mask & CP].mean() - A[i, t_mask & ~CP].mean()
-        ty = np.where(tv > 1.96, "反转", np.where(tv < -1.96, "外推", "无方向"))
-        return d, tv, ch, ty
 
+def types():
+    T = PL.T
     allr = np.ones(T, bool); half = np.arange(T) < T // 2
     d, tv, ch, ty = classify(allr)
     _, _, _, t1 = classify(half); _, _, _, t2 = classify(~half)
