@@ -43,9 +43,13 @@ FIXED = {"HDLB": (50.0, 0.0), "HDEB": (None, 0.0), "HB": (-50.0, 0.0), "HDB": (-
 
 def load(m):
     """读取模型的个人参数，补成 18 列（与 s35 相同：b, wI, wF, aF, wB, η, δ, lnσ, aH, wD, aD, dE, W, λ1, κ, λ2, λ4, κ1）。
-    名字以 "s28:" / "s35:" 开头时取该步的真实拟合（如 s28:HDWLG1、s35:HDWLT1）。"""
+    名字以 "s28:" / "s35:" / "s22:" 开头时取该步的真实拟合（如 s28:HDWLG1、s35:HDWLT1、s22:HB），"s38:" 取联合估计（如 s38:HB）。"""
     if m.startswith("s28:") or m.startswith("s35:"):
         SRC[m] = f"{m[:3]}_真实_{m[4:]}.json"; FIXED[m] = (-50.0 if "F" in m[4:] else 50.0, 1.0)
+    elif m.startswith("s22:"):
+        SRC[m] = f"s22_真实_{m[4:]}.json"; FIXED[m] = (-50.0, 0.0)                    # 标准模型空间（世界模型为分状态的预期）
+    elif m.startswith("s38:"):
+        SRC[m] = f"s38_联合估计_{m[4:]}.json"; FIXED[m] = (-50.0, 0.0)                 # 与共同因素联合估计的个体参数
     X = np.array(json.loads((PL.OUT / SRC[m]).read_text(encoding="utf-8"))["X"])
     Y = np.zeros((X.shape[0], 18)); Y[:, :X.shape[1]] = X
     dE, W = FIXED[m]
